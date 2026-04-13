@@ -1,0 +1,238 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slug",
+    "layering_strategy",
+    "aggregate_consistency",
+    "integration_patterns",
+    "storage",
+    "cross_cutting",
+    "testing_strategy",
+    "nfrs",
+    "open_questions"
+  ],
+  "properties": {
+    "slug": { "type": "string" },
+    "layering_strategy": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "pattern", "cqrs_applied", "rationale"],
+        "properties": {
+          "context": { "type": "string" },
+          "pattern": {
+            "type": "string",
+            "enum": ["hexagonal", "clean", "layered"]
+          },
+          "cqrs_applied": { "type": "boolean" },
+          "cqrs_read_models": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rationale": { "$ref": "#/$defs/rationale" }
+        }
+      }
+    },
+    "aggregate_consistency": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "aggregate", "within_aggregate", "cross_aggregate_events", "rationale"],
+        "properties": {
+          "context": { "type": "string" },
+          "aggregate": { "type": "string" },
+          "within_aggregate": {
+            "type": "string",
+            "enum": ["strong", "transactional"]
+          },
+          "cross_aggregate_events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["event_name", "target_aggregate"],
+              "properties": {
+                "event_name": { "type": "string" },
+                "target_aggregate": { "type": "string" }
+              }
+            }
+          },
+          "rationale": { "$ref": "#/$defs/rationale" }
+        }
+      }
+    },
+    "integration_patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_context", "target_context", "relationship_type",
+          "integration_style", "api_surface_type", "acl_needed",
+          "consistency_guarantee", "rationale"
+        ],
+        "properties": {
+          "source_context": { "type": "string" },
+          "target_context": { "type": "string" },
+          "relationship_type": {
+            "type": "string",
+            "enum": ["shared-kernel", "customer-supplier", "anti-corruption-layer", "open-host", "conformist"]
+          },
+          "integration_style": {
+            "type": "string",
+            "enum": ["sync", "async", "batch"]
+          },
+          "api_surface_type": {
+            "type": "string",
+            "enum": ["REST", "GraphQL", "event-driven", "none"]
+          },
+          "acl_needed": { "type": "boolean" },
+          "translation_approach": { "type": "string" },
+          "consistency_guarantee": { "type": "string" },
+          "rationale": { "$ref": "#/$defs/rationale" }
+        }
+      }
+    },
+    "storage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "aggregate", "type", "transaction_boundary", "rationale"],
+        "properties": {
+          "context": { "type": "string" },
+          "aggregate": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["relational", "document", "event-store", "in-memory"]
+          },
+          "transaction_boundary": { "type": "string" },
+          "rationale": { "$ref": "#/$defs/rationale" }
+        }
+      }
+    },
+    "cross_cutting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auth", "error_propagation", "observability"],
+      "properties": {
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authentication_layer", "authorization_layer", "rationale"],
+          "properties": {
+            "authentication_layer": { "type": "string" },
+            "authorization_layer": { "type": "string" },
+            "rationale": { "type": "string" }
+          }
+        },
+        "error_propagation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["domain_exceptions", "application_exceptions", "infrastructure_exceptions", "translation_rules"],
+          "properties": {
+            "domain_exceptions": { "type": "string" },
+            "application_exceptions": { "type": "string" },
+            "infrastructure_exceptions": { "type": "string" },
+            "translation_rules": { "type": "string" }
+          }
+        },
+        "observability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["trace_boundaries", "logging_per_layer", "metrics_exposure"],
+          "properties": {
+            "trace_boundaries": { "type": "string" },
+            "logging_per_layer": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["layer", "what_to_log"],
+                "properties": {
+                  "layer": { "type": "string" },
+                  "what_to_log": { "type": "string" }
+                }
+              }
+            },
+            "metrics_exposure": { "type": "string" }
+          }
+        }
+      }
+    },
+    "testing_strategy": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["layer", "test_type", "what_to_test", "what_not_to_test"],
+        "properties": {
+          "layer": { "type": "string" },
+          "test_type": { "type": "string" },
+          "what_to_test": { "type": "string" },
+          "what_not_to_test": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "nfrs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "constraint", "scope", "source"],
+        "properties": {
+          "category": { "type": "string" },
+          "constraint": { "type": "string" },
+          "scope": { "type": "string" },
+          "source": {
+            "type": "string",
+            "enum": ["human_provided"]
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "decision_log_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "trigger", "changed_fields"],
+      "properties": {
+        "summary": { "type": "string" },
+        "trigger": {
+          "type": "string",
+          "enum": ["initial_draft", "human_feedback", "open_question_resolved", "scope_change"]
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "rationale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_signal", "rule_applied", "derived_value"],
+      "properties": {
+        "source_signal": { "type": "string" },
+        "rule_applied": { "type": "string" },
+        "derived_value": { "type": "string" },
+        "override_reason": { "type": "string" }
+      }
+    }
+  }
+}

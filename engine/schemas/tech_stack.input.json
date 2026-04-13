@@ -1,0 +1,127 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "adrs", "open_questions"],
+  "properties": {
+    "slug": {
+      "type": "string",
+      "description": "The project slug. Must match the slug of the source design artifact. Example: deploy-rollback"
+    },
+    "adrs": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One ADR record per confirmed decision point, in agenda order. Must be a JSON array, never a string.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_point",
+          "architectural_signal",
+          "candidates",
+          "constraints_surfaced",
+          "chosen",
+          "rationale",
+          "rejections"
+        ],
+        "properties": {
+          "decision_point": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The technology decision dimension name (e.g. 'API framework', 'Database + ORM (relational)')."
+          },
+          "architectural_signal": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The specific design artifact field and value that triggered this dimension. Use 'human_added' for manually added decisions."
+          },
+          "candidates": {
+            "type": "array",
+            "minItems": 2,
+            "description": "Technology candidates surfaced during deliberation. Minimum 2 required — never deliberate on a single option.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "tradeoffs"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Technology name (e.g. 'FastAPI', 'PostgreSQL', 'Prometheus')."
+                },
+                "tradeoffs": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Honest strengths and weaknesses in this specific context. Must not be empty."
+                }
+              }
+            }
+          },
+          "constraints_surfaced": {
+            "type": "array",
+            "description": "Constraints raised by the human during deliberation. Empty array is valid only if no constraints were raised. Must be a JSON array, never a string. Use [] if none.",
+            "items": { "type": "string" }
+          },
+          "chosen": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The confirmed technology name — not a description or phrase."
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why this technology was chosen. Must reference the specific constraints that drove the choice."
+          },
+          "rejections": {
+            "type": "array",
+            "minItems": 1,
+            "description": "One entry per non-chosen candidate. rejection_reason must be non-empty. Must be a JSON array, never a string.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["candidate", "rejection_reason"],
+              "properties": {
+                "candidate": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The name of the non-chosen candidate."
+                },
+                "rejection_reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Why this candidate was not chosen. Must be non-empty — a blank rejection is not a deliberation trail."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Genuine post-draft gaps only (e.g. version compatibility not verified). Must be a JSON array, never a string. Use [] if none."
+    },
+    "decision_log_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "trigger", "changed_fields"],
+      "description": "Entry to append to the artifact's decision_log. Required on every write_tech_stack call.",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Plain-language description of what was decided or changed. On re-open: must name the decision point and the constraint that triggered the re-open."
+        },
+        "trigger": {
+          "type": "string",
+          "enum": ["initial_draft", "human_feedback", "open_question_resolved", "scope_change"],
+          "description": "initial_draft on v1; human_feedback on post-draft refinement; scope_change when a re-open changes a prior choice."
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Must be a JSON array, never a string. Use [] if unknown. Use ['adrs'] for first draft or re-open changes."
+        }
+      }
+    }
+  }
+}

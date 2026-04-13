@@ -1,0 +1,132 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slug",
+    "idea",
+    "alternatives",
+    "chosen_direction",
+    "competitive_scan",
+    "complexity_assessment",
+    "open_questions"
+  ],
+  "properties": {
+    "slug": {
+      "type": "string",
+      "description": "2-3 word human-readable identifier, lowercase hyphenated. Set once on v1. Example: deploy-rollback, expense-approvals"
+    },
+    "idea": {
+      "type": "string",
+      "description": "The verbatim original idea as provided by the user. Carried forward unchanged on all versions."
+    },
+    "alternatives": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "tradeoffs"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "What this direction is and what it focuses on."
+          },
+          "tradeoffs": {
+            "type": "string",
+            "description": "What is gained and what is given up by choosing this direction. Why it was or was not chosen."
+          }
+        }
+      },
+      "description": "Must be a JSON array, never a string. Use [] for empty."
+    },
+    "chosen_direction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direction",
+        "rationale"
+      ],
+      "properties": {
+        "direction": {
+          "type": "string",
+          "description": "A clear, specific statement of the chosen direction."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Why this direction was chosen over the alternatives. Must reference the alternatives explicitly."
+        }
+      }
+    },
+    "competitive_scan": {
+      "type": "string",
+      "description": "Findings from the competitive WebSearch. What exists, how it addresses the problem, and what gap remains."
+    },
+    "complexity_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "decomposition_needed"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "description": "Estimated overall scope of the chosen direction."
+        },
+        "decomposition_needed": {
+          "type": "boolean",
+          "description": "Whether the chosen direction is large enough to require decomposition into independent subsystems. Subsystem identification is the Domain Agent's responsibility."
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Unresolved questions the Brainstormer could not settle. These become the Product Owner's first agenda items. Must be a JSON array, never a string. Use [] for empty."
+    },
+    "decision_log_entry": {
+      "type": "object",
+      "description": "Entry to append to the artifact's decision_log. Omit on v1 if nothing meaningful to record yet.",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "trigger",
+        "changed_fields"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Plain-language description of what was decided or changed in this version."
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "initial_draft",
+            "human_feedback",
+            "open_question_resolved",
+            "scope_change"
+          ],
+          "description": "What prompted this version."
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Top-level content fields that changed in this version. Must be a JSON array, never a string. Use [] for empty."
+        }
+      }
+    }
+  }
+}

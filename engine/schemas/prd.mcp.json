@@ -1,0 +1,102 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slug",
+    "title",
+    "problem",
+    "target_users",
+    "goals",
+    "success_metrics",
+    "scope_in",
+    "scope_out",
+    "features",
+    "assumptions",
+    "open_questions"
+  ],
+  "properties": {
+    "slug": { "type": "string" },
+    "source_idea": { "type": "string" },
+    "title": { "type": "string" },
+    "problem": { "type": "string" },
+    "target_users": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "goals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "success_metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric", "measurement_method"],
+        "properties": {
+          "metric": { "type": "string" },
+          "measurement_method": { "type": "string" }
+        }
+      }
+    },
+    "scope_in": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "scope_out": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description", "user_story", "priority", "acceptance_criteria"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "user_story": { "type": "string" },
+          "priority": {
+            "type": "string",
+            "enum": ["must", "should", "could", "wont"]
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "decision_log_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "trigger", "changed_fields"],
+      "properties": {
+        "summary": { "type": "string" },
+        "trigger": {
+          "type": "string",
+          "enum": ["initial_draft", "human_feedback", "open_question_resolved", "scope_change"]
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

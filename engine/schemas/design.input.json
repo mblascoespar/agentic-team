@@ -1,0 +1,340 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slug",
+    "layering_strategy",
+    "aggregate_consistency",
+    "integration_patterns",
+    "storage",
+    "cross_cutting",
+    "testing_strategy",
+    "nfrs",
+    "open_questions"
+  ],
+  "properties": {
+    "slug": {
+      "type": "string",
+      "description": "The project slug. Must match the slug of the source domain model. Example: deploy-rollback"
+    },
+    "layering_strategy": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per bounded context. Must be a JSON array, never a string.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "pattern", "cqrs_applied", "rationale"],
+        "properties": {
+          "context": {
+            "type": "string",
+            "description": "Bounded context name from the domain model."
+          },
+          "pattern": {
+            "type": "string",
+            "enum": ["hexagonal", "clean", "layered"],
+            "description": "Internal layering pattern derived from domain model signals."
+          },
+          "cqrs_applied": {
+            "type": "boolean",
+            "description": "Whether CQRS applies to this context. Derived from command/query/event split in the domain model."
+          },
+          "cqrs_read_models": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Aggregates that need separate read models. Required (non-empty) when cqrs_applied is true. Must be a JSON array, never a string."
+          },
+          "rationale": {
+            "$ref": "#/$defs/rationale"
+          }
+        }
+      }
+    },
+    "aggregate_consistency": {
+      "type": "array",
+      "description": "Consistency model per aggregate. One entry per aggregate across all contexts. Must be a JSON array, never a string.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "aggregate", "within_aggregate", "cross_aggregate_events", "rationale"],
+        "properties": {
+          "context": { "type": "string" },
+          "aggregate": { "type": "string" },
+          "within_aggregate": {
+            "type": "string",
+            "enum": ["strong", "transactional"],
+            "description": "Always strong/transactional — derived automatically, never requires human input."
+          },
+          "cross_aggregate_events": {
+            "type": "array",
+            "description": "Domain events emitted by this aggregate that drive cross-aggregate eventual consistency. Extracted directly from the domain model events array. Must be a JSON array, use [] if none.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["event_name", "target_aggregate"],
+              "properties": {
+                "event_name": { "type": "string" },
+                "target_aggregate": { "type": "string" }
+              }
+            }
+          },
+          "rationale": {
+            "$ref": "#/$defs/rationale"
+          }
+        }
+      }
+    },
+    "integration_patterns": {
+      "type": "array",
+      "description": "One entry per context map boundary. Single location for all cross-context decisions including API surface type. Must be a JSON array, use [] if no context map boundaries.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_context",
+          "target_context",
+          "relationship_type",
+          "integration_style",
+          "api_surface_type",
+          "acl_needed",
+          "consistency_guarantee",
+          "rationale"
+        ],
+        "properties": {
+          "source_context": { "type": "string" },
+          "target_context": { "type": "string" },
+          "relationship_type": {
+            "type": "string",
+            "enum": ["shared-kernel", "customer-supplier", "anti-corruption-layer", "open-host", "conformist"],
+            "description": "DDD relationship type from the domain model context map."
+          },
+          "integration_style": {
+            "type": "string",
+            "enum": ["sync", "async", "batch"],
+            "description": "Derived from relationship type and event volume."
+          },
+          "api_surface_type": {
+            "type": "string",
+            "enum": ["REST", "GraphQL", "event-driven", "none"],
+            "description": "API surface type for this boundary. Derived from relationship type and event volume: open-host+high-event-volume=event-driven; open-host+low-event-volume=REST or GraphQL; no-external-consumers=none."
+          },
+          "acl_needed": {
+            "type": "boolean",
+            "description": "Whether an Anti-Corruption Layer is needed. Derived from relationship type: ACL=true, conformist=false."
+          },
+          "translation_approach": {
+            "type": "string",
+            "description": "Required (non-empty) when acl_needed is true. Describes the translation direction and mechanism."
+          },
+          "consistency_guarantee": {
+            "type": "string",
+            "description": "Consistency guarantee at this boundary (e.g. eventual via domain events, synchronous strong)."
+          },
+          "rationale": {
+            "$ref": "#/$defs/rationale"
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "array",
+      "description": "Storage/persistence decision per aggregate. One entry per aggregate across all contexts. Must be a JSON array, never a string.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "aggregate", "type", "transaction_boundary", "rationale"],
+        "properties": {
+          "context": { "type": "string" },
+          "aggregate": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["relational", "document", "event-store", "in-memory"],
+            "description": "Storage type derived from aggregate characteristics: state-history/audit=event-store; complex-invariants+relational-queries=relational; variable-structure/sparse-fields=document."
+          },
+          "transaction_boundary": {
+            "type": "string",
+            "description": "Describes the transactional scope (e.g. single aggregate root, single bounded context)."
+          },
+          "rationale": {
+            "$ref": "#/$defs/rationale"
+          }
+        }
+      }
+    },
+    "cross_cutting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auth", "error_propagation", "observability"],
+      "description": "Global cross-cutting concerns. One set per design artifact, not per context.",
+      "properties": {
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authentication_layer", "authorization_layer", "rationale"],
+          "properties": {
+            "authentication_layer": {
+              "type": "string",
+              "description": "Always API boundary — derived from layering pattern, never requires human input."
+            },
+            "authorization_layer": {
+              "type": "string",
+              "description": "Always application service layer — derived from layering pattern, never requires human input."
+            },
+            "rationale": { "type": "string" }
+          }
+        },
+        "error_propagation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["domain_exceptions", "application_exceptions", "infrastructure_exceptions", "translation_rules"],
+          "description": "Fully derived from the layering pattern. Never requires human input.",
+          "properties": {
+            "domain_exceptions": {
+              "type": "string",
+              "description": "Invariant violations — never leave the domain layer."
+            },
+            "application_exceptions": {
+              "type": "string",
+              "description": "Use case failures — translated at the application boundary."
+            },
+            "infrastructure_exceptions": {
+              "type": "string",
+              "description": "I/O failures — translated at the adapter boundary."
+            },
+            "translation_rules": {
+              "type": "string",
+              "description": "How exceptions are mapped at each boundary."
+            }
+          }
+        },
+        "observability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["trace_boundaries", "logging_per_layer", "metrics_exposure"],
+          "properties": {
+            "trace_boundaries": {
+              "type": "string",
+              "description": "Where distributed traces start and end."
+            },
+            "logging_per_layer": {
+              "type": "array",
+              "minItems": 1,
+              "description": "What to log at each architectural layer. Must be a JSON array.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["layer", "what_to_log"],
+                "properties": {
+                  "layer": { "type": "string" },
+                  "what_to_log": { "type": "string" }
+                }
+              }
+            },
+            "metrics_exposure": {
+              "type": "string",
+              "description": "What metrics are exposed and at which boundary."
+            }
+          }
+        }
+      }
+    },
+    "testing_strategy": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Testing strategy per architectural layer. Derived from layering pattern and CQRS decisions. Must be a JSON array.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["layer", "test_type", "what_to_test", "what_not_to_test"],
+        "properties": {
+          "layer": { "type": "string" },
+          "test_type": { "type": "string" },
+          "what_to_test": { "type": "string" },
+          "what_not_to_test": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required and non-empty. Prevents test pollution across layers."
+          }
+        }
+      }
+    },
+    "nfrs": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Non-functional requirements. Always human-provided — the domain model does not carry NFRs. Must be a JSON array.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "constraint", "scope", "source"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "NFR category (e.g. latency, availability, throughput, compliance)."
+          },
+          "constraint": {
+            "type": "string",
+            "description": "Measurable constraint with numeric value and unit (e.g. p99 latency < 200ms, availability >= 99.9%)."
+          },
+          "scope": {
+            "type": "string",
+            "description": "global, or a specific context name, or a specific aggregate name."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["human_provided"],
+            "description": "NFRs are always human-provided. The engine never derives NFRs."
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Unresolved architectural ambiguities. Cross-session continuity signal. Must be a JSON array, use [] if none."
+    },
+    "decision_log_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "trigger", "changed_fields"],
+      "description": "Entry to append to the artifact's decision_log. Omit on v1 if nothing meaningful to record.",
+      "properties": {
+        "summary": { "type": "string" },
+        "trigger": {
+          "type": "string",
+          "enum": ["initial_draft", "human_feedback", "open_question_resolved", "scope_change"]
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Must be a JSON array, never a string. Use [] if unknown."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "rationale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_signal", "rule_applied", "derived_value"],
+      "description": "Derivation rationale. Every derived decision must carry this. If overridden by human, retain source_signal/rule_applied/derived_value and add override_reason.",
+      "properties": {
+        "source_signal": {
+          "type": "string",
+          "description": "The specific domain model element that triggered this decision (e.g. 'DesignDerivation context has 3 external adapters and domain logic isolated from I/O')."
+        },
+        "rule_applied": {
+          "type": "string",
+          "description": "The derivation rule used (e.g. 'many external dependencies + I/O isolation needed → hexagonal')."
+        },
+        "derived_value": {
+          "type": "string",
+          "description": "The conclusion reached (e.g. 'hexagonal')."
+        },
+        "override_reason": {
+          "type": "string",
+          "description": "Human-provided justification when overriding a derived decision. Original rationale fields must be preserved."
+        }
+      }
+    }
+  }
+}

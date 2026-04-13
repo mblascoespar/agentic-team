@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agentic-team": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "engine/mcp_server.py"]
+    }
+  }
+}
