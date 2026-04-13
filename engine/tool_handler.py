@@ -59,6 +59,15 @@ _TECH_STACK_CONTENT_KEYS = ("adrs", "open_questions")
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 
+# Model stages that have a base schema in engine/schemas/.
+# Other stages (brief, prd, domain, design, tech_stack) use an empty schema.
+_BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
+    "model_domain":    "model-domain.json",
+    "model_data_flow": "model-data-flow.json",
+    "model_system":    "model-system.json",
+    "model_workflow":  "model-workflow.json",
+}
+
 # ---------------------------------------------------------------------------
 # Artifact directory resolution — CWD-relative for portability
 #
@@ -130,7 +139,80 @@ def read_artifact(slug: str, stage: str, version: int | None = None) -> dict:
             raise ValueError(
                 f"ERROR [read_artifact]: version {version} not found for slug '{slug}', stage '{stage}'."
             )
-    return json.loads(path.read_text())
+    artifact = json.loads(path.read_text())
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    schema = json.loads(schema_path.read_text()) if schema_path.exists() else {}
+    return {"artifact": artifact, "schema": schema}
+
+
+# ---------------------------------------------------------------------------
+# Instance schema helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_instance_schema(slug: str, stage: str) -> None:
+    """Create schema.json for slug/stage if it does not exist yet.
+
+    Copies the base schema from engine/schemas/ when one is defined for the
+    stage. Falls back to an empty schema for stages without a base schema.
+    Called on the first write_* for a slug/stage — idempotent on subsequent calls.
+    """
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    if schema_path.exists():
+        return
+    base_filename = _BASE_SCHEMAS_BY_STAGE.get(stage)
+    if base_filename is not None:
+        base_schema = json.loads((_SCHEMAS_DIR / base_filename).read_text())
+    else:
+        base_schema = {"fields": {}}
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(json.dumps(base_schema, indent=2))
+
+
+def handle_update_schema(slug: str, stage: str, field_name: str, kind: str, description: str) -> dict:
+    """Add a field to the instance schema for slug/stage.
+
+    Rejects: field already exists, kind not in {mandatory, optional}, empty
+    field_name, empty description. Auto-appends a decision_log entry to the
+    schema file with trigger: "schema_field_added".
+    """
+    _validate_slug_format(slug, "update_schema")
+
+    if kind not in {"mandatory", "optional"}:
+        raise ValueError(
+            f"ERROR [update_schema]: kind must be 'mandatory' or 'optional', got '{kind}'."
+        )
+    if not field_name or not field_name.strip():
+        raise ValueError("ERROR [update_schema]: field_name must not be empty.")
+    if not description or not description.strip():
+        raise ValueError("ERROR [update_schema]: description must not be empty.")
+
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    if not schema_path.exists():
+        raise ValueError(
+            f"ERROR [update_schema]: no schema found for slug '{slug}', stage '{stage}'. "
+            f"The stage must be written at least once before the schema can be updated."
+        )
+
+    schema = json.loads(schema_path.read_text())
+    fields = schema.setdefault("fields", {})
+
+    if field_name in fields:
+        raise ValueError(
+            f"ERROR [update_schema]: field '{field_name}' already exists in the schema for "
+            f"slug '{slug}', stage '{stage}'. Choose a different name."
+        )
+
+    fields[field_name] = {"kind": kind, "description": description.strip()}
+    schema.setdefault("decision_log", []).append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trigger": "schema_field_added",
+        "field_name": field_name,
+        "kind": kind,
+        "description": description.strip(),
+    })
+
+    schema_path.write_text(json.dumps(schema, indent=2))
+    return schema
 
 
 def _resolve_topology(slug: str) -> list[str] | None:

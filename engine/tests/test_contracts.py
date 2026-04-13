@@ -282,44 +282,39 @@ class TestGetAvailableArtifacts:
 
 class TestReadArtifact:
     """
-    Verifies that read_artifact(slug, stage, version) returns the full artifact
-    content and raises clear errors for missing or invalid inputs.
-
-    This is the MCP-scoped replacement for direct file reads in agent prompts.
-    Agents must use this tool instead of Claude Code's Read/Glob for artifact access.
+    Verifies that read_artifact(slug, stage, version) returns {"artifact": ..., "schema": ...}
+    and raises clear errors for missing or invalid inputs.
     """
 
-    def test_returns_full_artifact_for_brief(self, artifacts_dir):
+    def test_returns_artifact_and_schema_keys(self, artifacts_dir):
         handle_write_brief(make_brief_input(slug="my-app"))
-        artifact = read_artifact("my-app", "brief")
-        assert artifact["slug"] == "my-app"
-        assert artifact["version"] == 1
-        assert "content" in artifact
+        result = read_artifact("my-app", "brief")
+        assert "artifact" in result
+        assert "schema" in result
+
+    def test_artifact_has_expected_fields(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        result = read_artifact("my-app", "brief")
+        assert result["artifact"]["slug"] == "my-app"
+        assert result["artifact"]["version"] == 1
+        assert "content" in result["artifact"]
 
     def test_returns_latest_version_when_version_omitted(self, artifacts_dir):
         v1 = handle_write_brief(make_brief_input(slug="my-app"))
         handle_write_brief(make_brief_input(slug="my-app"), existing_brief=v1)
-        artifact = read_artifact("my-app", "brief")
-        assert artifact["version"] == 2
+        result = read_artifact("my-app", "brief")
+        assert result["artifact"]["version"] == 2
 
     def test_returns_specific_version_when_given(self, artifacts_dir):
         v1 = handle_write_brief(make_brief_input(slug="my-app"))
         handle_write_brief(make_brief_input(slug="my-app"), existing_brief=v1)
-        artifact = read_artifact("my-app", "brief", version=1)
-        assert artifact["version"] == 1
+        result = read_artifact("my-app", "brief", version=1)
+        assert result["artifact"]["version"] == 1
 
-    def test_returns_full_artifact_for_prd(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input(slug="my-app"))
-        artifact = read_artifact("my-app", "prd")
-        assert artifact["slug"] == "my-app"
-        assert "content" in artifact
-        assert "title" in artifact["content"]
-
-    def test_returns_full_artifact_for_domain(self, domain_artifacts_dir):
-        handle_write_domain_model(make_domain_input(slug="my-app"))
-        artifact = read_artifact("my-app", "domain")
-        assert artifact["slug"] == "my-app"
-        assert "bounded_contexts" in artifact["content"]
+    def test_schema_empty_for_stages_without_base_schema(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        result = read_artifact("my-app", "brief")
+        assert result["schema"] == {}
 
     def test_raises_for_unknown_slug(self, artifacts_dir):
         with pytest.raises(ValueError, match="ERROR \\[read_artifact\\]"):
@@ -357,7 +352,7 @@ class TestContractDomainModelToDesign:
         assert design["slug"] == "my-app"
 
     def test_design_id_is_independent_from_domain_id(self, design_artifacts_dir):
-        domain = read_artifact("my-app", "domain")
+        domain = read_artifact("my-app", "domain")["artifact"]
         design = handle_write_design(make_design_input(slug="my-app"))
         assert design["id"] != domain["id"]
         assert design["id"].startswith("design-")
@@ -385,7 +380,7 @@ class TestContractDesignToTechStack:
         assert ts["slug"] == "my-app"
 
     def test_tech_stack_id_is_independent_from_design_id(self, tech_stack_artifacts_dir):
-        design = read_artifact("my-app", "design")
+        design = read_artifact("my-app", "design")["artifact"]
         ts = handle_write_tech_stack(make_tech_stack_input(slug="my-app"))
         assert ts["id"] != design["id"]
         assert ts["id"].startswith("tech-stack-")

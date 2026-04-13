@@ -26,6 +26,8 @@ from tool_handler import (
     handle_approve_design,
     handle_write_tech_stack,
     handle_approve_tech_stack,
+    handle_update_schema,
+    _ensure_instance_schema,
 )
 from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
 
@@ -865,3 +867,56 @@ class TestApproveTechStack:
     def test_approve_rejects_path_outside_artifacts_dir(self, tech_stack_artifacts_dir):
         with pytest.raises(ValueError, match="outside the artifacts directory"):
             handle_approve_tech_stack("/etc/passwd")
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Instance schema lifecycle
+# ---------------------------------------------------------------------------
+
+class TestInstanceSchema:
+    """
+    Verifies that _ensure_instance_schema creates a schema.json from the base
+    schema on first call, and that handle_update_schema correctly extends it.
+    """
+
+    pytestmark = pytest.mark.lifecycle
+
+    def test_schema_created_from_base_for_model_domain(self, artifacts_dir):
+        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
+        _ensure_instance_schema("my-app", "model_domain")
+        schema_path = artifacts_dir / "my-app" / "model_domain" / "schema.json"
+        assert schema_path.exists()
+        schema = json.loads(schema_path.read_text())
+        assert "bounded_contexts" in schema["fields"]
+        assert schema["fields"]["bounded_contexts"]["kind"] == "mandatory"
+
+    def test_schema_idempotent_on_repeat_calls(self, artifacts_dir):
+        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
+        _ensure_instance_schema("my-app", "model_domain")
+        _ensure_instance_schema("my-app", "model_domain")  # second call must not overwrite
+        schema_path = artifacts_dir / "my-app" / "model_domain" / "schema.json"
+        assert schema_path.exists()
+
+    def test_empty_schema_for_stage_with_no_base(self, artifacts_dir):
+        (artifacts_dir / "my-app" / "brief").mkdir(parents=True)
+        _ensure_instance_schema("my-app", "brief")
+        schema = json.loads((artifacts_dir / "my-app" / "brief" / "schema.json").read_text())
+        assert schema == {"fields": {}}
+
+    def test_update_schema_adds_field(self, artifacts_dir):
+        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
+        _ensure_instance_schema("my-app", "model_domain")
+        handle_update_schema("my-app", "model_domain", "risk_drivers", "optional", "Key risks that shape the model")
+        schema_path = artifacts_dir / "my-app" / "model_domain" / "schema.json"
+        schema = json.loads(schema_path.read_text())
+        assert "risk_drivers" in schema["fields"]
+        assert schema["fields"]["risk_drivers"]["kind"] == "optional"
+
+    def test_update_schema_appends_decision_log(self, artifacts_dir):
+        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
+        _ensure_instance_schema("my-app", "model_domain")
+        handle_update_schema("my-app", "model_domain", "risk_drivers", "optional", "Key risks")
+        schema = json.loads((artifacts_dir / "my-app" / "model_domain" / "schema.json").read_text())
+        assert len(schema["decision_log"]) == 1
+        assert schema["decision_log"][0]["trigger"] == "schema_field_added"
+        assert schema["decision_log"][0]["field_name"] == "risk_drivers"

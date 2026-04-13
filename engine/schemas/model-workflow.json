@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "actors": {
+      "kind": "mandatory",
+      "description": "Human and system actors involved in the workflow and their roles"
+    },
+    "steps": {
+      "kind": "mandatory",
+      "description": "Ordered workflow steps with triggers, actions, conditions, and failure modes"
+    },
+    "automation_boundary": {
+      "kind": "mandatory",
+      "description": "What is automated vs manual, why, and what triggers human intervention"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved questions to be addressed before approval"
+    }
+  }
+}
