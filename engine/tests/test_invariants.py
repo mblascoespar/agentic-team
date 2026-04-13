@@ -224,6 +224,104 @@ def test_prd_v1_fails_without_approved_brief(artifacts_dir):
 
 
 # ---------------------------------------------------------------------------
+# PRD — archetype: validation, locking, content presence
+# ---------------------------------------------------------------------------
+
+def test_prd_write_rejects_missing_primary_archetype(artifacts_dir):
+    inp = make_prd_input()
+    del inp["primary_archetype"]
+    with pytest.raises(ValueError, match="ERROR \\[write_prd\\]"):
+        handle_write_prd(inp)
+
+
+def test_prd_write_rejects_invalid_primary_archetype(artifacts_dir):
+    with pytest.raises(ValueError, match="ERROR \\[write_prd\\]"):
+        handle_write_prd(make_prd_input(primary_archetype="magic_system"))
+
+
+def test_prd_write_rejects_missing_archetype_reasoning(artifacts_dir):
+    inp = make_prd_input()
+    del inp["archetype_reasoning"]
+    with pytest.raises(ValueError, match="ERROR \\[write_prd\\]"):
+        handle_write_prd(inp)
+
+
+def test_prd_write_rejects_unsupported_archetype_combination(prd_artifacts_dir):
+    """data_pipeline + process_system is not a valid combination."""
+    with pytest.raises(ValueError, match="unsupported archetype combination"):
+        handle_write_prd(make_prd_input(
+            slug="test-pipeline",
+            primary_archetype="data_pipeline",
+            secondary_archetype="process_system",
+        ))
+
+
+@pytest.mark.parametrize("slug,archetype", [
+    ("test-pipeline",    "data_pipeline"),
+    ("test-integration", "system_integration"),
+    ("test-workflow",    "process_system"),
+])
+def test_prd_write_accepts_valid_single_archetype(prd_artifacts_dir, slug, archetype):
+    artifact = handle_write_prd(make_prd_input(slug=slug, primary_archetype=archetype))
+    assert artifact["content"]["primary_archetype"] == archetype
+
+
+def test_prd_write_accepts_valid_layered_combination(prd_artifacts_dir):
+    artifact = handle_write_prd(make_prd_input(
+        slug="test-layered",
+        primary_archetype="system_integration",
+        secondary_archetype="process_system",
+    ))
+    assert artifact["content"]["primary_archetype"] == "system_integration"
+    assert artifact["content"]["secondary_archetype"] == "process_system"
+
+
+def test_prd_archetype_locked_on_v1_primary_cannot_change(prd_artifacts_dir):
+    v1 = handle_write_prd(make_prd_input(primary_archetype="domain_system"))
+    v2 = handle_write_prd(
+        make_prd_input(primary_archetype="data_pipeline"),
+        existing_prd=v1,
+    )
+    assert v2["content"]["primary_archetype"] == "domain_system"
+
+
+def test_prd_archetype_locked_on_v1_reasoning_cannot_change(prd_artifacts_dir):
+    v1 = handle_write_prd(make_prd_input(archetype_reasoning="Original reasoning."))
+    v2 = handle_write_prd(
+        make_prd_input(archetype_reasoning="Agent tries to change this."),
+        existing_prd=v1,
+    )
+    assert v2["content"]["archetype_reasoning"] == "Original reasoning."
+
+
+def test_prd_archetype_confidence_optional_does_not_raise(prd_artifacts_dir):
+    """Omitting archetype_confidence on v1 must not cause a KeyError."""
+    inp = make_prd_input()
+    inp.pop("archetype_confidence", None)
+    artifact = handle_write_prd(inp)
+    assert "primary_archetype" in artifact["content"]
+    assert "archetype_confidence" not in artifact["content"]
+
+
+def test_prd_archetype_locked_across_three_versions(prd_artifacts_dir):
+    v1 = handle_write_prd(make_prd_input(primary_archetype="domain_system"))
+    v2 = handle_write_prd(make_prd_input(primary_archetype="data_pipeline"), existing_prd=v1)
+    v3 = handle_write_prd(make_prd_input(primary_archetype="process_system"), existing_prd=v2)
+    assert v3["content"]["primary_archetype"] == "domain_system"
+
+
+def test_prd_archetype_secondary_cannot_be_added_on_v2(prd_artifacts_dir):
+    """Agent cannot inject secondary_archetype on v2 if it was absent from v1."""
+    v1 = handle_write_prd(make_prd_input(primary_archetype="domain_system"))
+    assert "secondary_archetype" not in v1["content"]
+    v2 = handle_write_prd(
+        make_prd_input(primary_archetype="domain_system", secondary_archetype="process_system"),
+        existing_prd=v1,
+    )
+    assert "secondary_archetype" not in v2["content"]
+
+
+# ---------------------------------------------------------------------------
 # Domain model — id
 # ---------------------------------------------------------------------------
 
