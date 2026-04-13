@@ -37,7 +37,6 @@ _VALID_COMBINATIONS: frozenset[tuple] = frozenset({
     ("system_integration", "process_system"),
 })
 
-# TODO(step-2): consumed by DAG router in get_available_artifacts topology resolution
 _DAG_TOPOLOGIES: dict[tuple, list[str]] = {
     ("domain_system",):                       ["brief", "prd", "model_domain",    "design", "tech_stack"],
     ("data_pipeline",):                       ["brief", "prd", "model_data_flow", "design", "tech_stack"],
@@ -59,16 +58,6 @@ _DESIGN_CONTENT_KEYS = (
 _TECH_STACK_CONTENT_KEYS = ("adrs", "open_questions")
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
-
-# ---------------------------------------------------------------------------
-# DAG topology — single source of truth for stage ordering
-# Agents never see this; the engine uses it for upstream resolution and
-# get_available_artifacts queries.
-# ---------------------------------------------------------------------------
-
-# Entry-node stages have no upstream. Listed here so get_available_artifacts
-# can skip the upstream check without special-casing stage names.
-_ENTRY_STAGES: frozenset[str] = frozenset({"brief"})
 
 # ---------------------------------------------------------------------------
 # Artifact directory resolution — CWD-relative for portability
@@ -164,53 +153,51 @@ def _resolve_topology(slug: str) -> list[str] | None:
     return list(topology) if topology is not None else None
 
 
-def _universal_upstream(stage: str) -> str | None:
-    """Return upstream if stage appears in ALL topologies with the same predecessor.
+def _next_stage(slug: str) -> str | None:
+    """Return the next unstarted stage for slug by walking topology forward.
 
-    Example: 'prd' follows 'brief' in every topology → returns 'brief'.
-    Example: 'tech_stack' follows 'design' in every topology → returns 'design'.
-    Example: 'model_domain' exists in only one topology → returns None (slug-specific).
-    Example: 'design' follows a different model stage per archetype → returns None.
+    Scans the slug's artifact state from the brief forward. Returns the first
+    stage that has no artifact yet. Returns None when:
+    - No approved brief exists (entry gate not met)
+    - A stage is in-progress (not yet approved — one stage active at a time)
+    - The topology cannot be determined (no approved PRD, or pre-archetype PRD)
+    - All topology stages are already approved
+
+    Brief is the DAG entry node and is never returned: briefs are created by the
+    Brainstormer, not queued up as ready-to-start.
     """
-    upstreams: set[str | None] = set()
-    for topology in _DAG_TOPOLOGIES.values():
-        if stage not in topology:
-            return None  # absent from at least one topology — needs slug-specific resolution
-        idx = topology.index(stage)
-        upstreams.add(topology[idx - 1] if idx > 0 else None)
-    return upstreams.pop() if len(upstreams) == 1 else None
-
-
-def _get_upstream_stage(slug: str, stage: str) -> str | None:
-    """Return the upstream stage for slug at stage, purely from topology.
-
-    Checks for a universal upstream first (stage appears in all topologies with
-    the same predecessor — e.g. prd always follows brief). Falls back to
-    slug-specific topology resolution when the upstream varies by archetype.
-    Returns None when the stage is not in the slug's topology (wrong archetype,
-    no approved PRD, or entry-node stage). Callers treat None as "skip".
-    """
-    if stage in _ENTRY_STAGES:
+    if find_latest(slug, "brief", status="approved") is None:
         return None
-    universal = _universal_upstream(stage)
-    if universal is not None:
-        return universal
+
+    prd_path = find_latest(slug, "prd")
+    if prd_path is None:
+        return "prd"
+
+    if json.loads(prd_path.read_text()).get("status") != "approved":
+        return None  # PRD in-progress — wait for approval
+
     topology = _resolve_topology(slug)
-    if topology is None or stage not in topology:
-        return None
-    idx = topology.index(stage)
-    return topology[idx - 1] if idx > 0 else None
+    if topology is None:
+        return None  # PRD approved but predates archetype classification
+
+    prd_idx = topology.index("prd")
+    for stage in topology[prd_idx + 1:]:
+        path = find_latest(slug, stage)
+        if path is None:
+            return stage  # First stage with no artifact yet
+        if json.loads(path.read_text()).get("status") != "approved":
+            return None  # Stage in-progress — wait
+    return None  # All stages complete
 
 
 def get_available_artifacts(stage: str) -> dict:
     """Return in-progress, approved, and ready-to-start artifacts for a stage.
 
     - in_progress: draft artifacts at this stage
-    - approved: approved artifacts at this stage (includes upstream_changed signal
-      when the latest approved upstream artifact was updated after this one)
-    - ready_to_start: slugs whose upstream stage artifact is approved but this
-      stage has no artifact yet; derived purely from topology — a slug whose
-      archetype does not include this stage never appears here
+    - approved: approved artifacts at this stage
+    - ready_to_start: slugs where _next_stage(slug) == stage — the immediate
+      upstream is approved and this stage has no artifact yet; topology-correct
+      (slugs whose archetype does not include this stage never appear here)
     """
     artifacts_dir = _get_artifacts_dir()
     result: dict = {"in_progress": [], "approved": [], "ready_to_start": []}
@@ -234,26 +221,9 @@ def get_available_artifacts(stage: str) -> dict:
             if artifact["status"] == "draft":
                 result["in_progress"].append(entry)
             else:
-                upstream_stage = _get_upstream_stage(slug, stage)
-                if upstream_stage:
-                    upstream_path = find_latest(slug, upstream_stage, status="approved")
-                    if upstream_path:
-                        upstream_artifact = json.loads(upstream_path.read_text())
-                        # ISO 8601 string comparison is safe here: all updated_at values are
-                        # generated by datetime.now(timezone.utc).isoformat() and are therefore
-                        # lexicographically sortable.
-                        if upstream_artifact.get("updated_at", "") > artifact.get("updated_at", ""):
-                            entry["upstream_changed"] = True
-                            entry["upstream_changed_note"] = (
-                                f"{upstream_stage} was re-approved at v{upstream_artifact['version']} "
-                                f"after this {stage} was approved at v{artifact['version']}"
-                            )
                 result["approved"].append(entry)
         else:
-            upstream_stage = _get_upstream_stage(slug, stage)
-            if not upstream_stage:
-                continue
-            if find_latest(slug, upstream_stage, status="approved"):
+            if _next_stage(slug) == stage:
                 result["ready_to_start"].append({"slug": slug})
 
     return result

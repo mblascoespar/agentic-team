@@ -33,7 +33,7 @@ from tool_handler import (
     handle_write_design, handle_approve_design,
     handle_write_tech_stack,
     get_available_artifacts, find_latest, read_artifact,
-    _resolve_topology, _get_upstream_stage, _universal_upstream,
+    _resolve_topology, _next_stage,
 )
 from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
 
@@ -395,13 +395,6 @@ class TestContractDesignToTechStack:
         assert (tech_stack_artifacts_dir / "my-app" / "design" / "v1.json").exists()
         assert (tech_stack_artifacts_dir / "my-app" / "tech_stack" / "v1.json").exists()
 
-    def test_approved_design_makes_slug_ready_to_start_for_tech_stack(self, tech_stack_artifacts_dir):
-        result = get_available_artifacts("tech_stack")
-        ready_slugs = [e["slug"] for e in result["ready_to_start"]]
-        # my-app has an approved design but no tech_stack yet in this fixture
-        assert "my-app" in ready_slugs
-
-
 class TestContractDesignToTechStackHandoffGuards:
     """
     Verifies that the engine enforces the Design → Tech Stack handoff contract:
@@ -450,7 +443,7 @@ class TestContractDomainModelToDesignHandoffGuards:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — DAG topology resolution
+# Step 2 — DAG topology: _resolve_topology and _next_stage
 # ---------------------------------------------------------------------------
 
 class TestTopologyResolution:
@@ -512,61 +505,77 @@ class TestTopologyResolution:
         assert _VALID_COMBINATIONS == frozenset(_DAG_TOPOLOGIES.keys())
 
 
-class TestUpstreamStageResolution:
+class TestNextStage:
     """
-    Verifies that _get_upstream_stage(slug, stage) returns the correct upstream
-    using _universal_upstream for stages common to all topologies, and slug-specific
-    topology resolution for archetype-specific stages.
+    Verifies _next_stage(slug) — the forward-looking function that returns the
+    first unstarted stage for a slug by walking the topology from approved state.
+
+    The function encodes the DAG gate rules:
+    - No approved brief → None (entry gate not met)
+    - Brief approved, no PRD started → "prd"
+    - PRD in-progress (draft) → None (wait for approval)
+    - PRD approved → first model stage for that archetype
+    - Model stage in-progress → None
+    - All stages complete → None
     """
 
-    def test_model_domain_upstream_is_prd(self, prd_artifacts_dir):
+    def test_returns_none_when_no_brief_exists(self, artifacts_dir):
+        assert _next_stage("nonexistent") is None
+
+    def test_returns_none_when_brief_is_draft_only(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        assert _next_stage("my-app") is None
+
+    def test_returns_prd_when_brief_approved_no_prd(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        handle_approve_brief(str(artifacts_dir / "my-app" / "brief" / "v1.json"))
+        assert _next_stage("my-app") == "prd"
+
+    def test_returns_none_when_prd_is_draft(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app"))
+        # PRD is draft — gate is not open
+        assert _next_stage("my-app") is None
+
+    def test_returns_model_domain_when_prd_approved_for_domain_system(self, prd_artifacts_dir):
         handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
         handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        assert _get_upstream_stage("my-app", "model_domain") == "prd"
+        assert _next_stage("my-app") == "model_domain"
 
-    def test_model_workflow_upstream_is_model_system_in_layered_case(self, prd_artifacts_dir):
+    def test_returns_model_data_flow_when_prd_approved_for_data_pipeline(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="data_pipeline"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_data_flow"
+
+    def test_returns_model_system_when_prd_approved_for_system_integration(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="system_integration"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_system"
+
+    def test_returns_model_workflow_when_prd_approved_for_process_system(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="process_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_workflow"
+
+    def test_returns_model_system_first_in_layered_topology(self, prd_artifacts_dir):
         handle_write_prd(make_prd_input(
             slug="my-app",
             primary_archetype="system_integration",
             secondary_archetype="process_system",
         ))
         handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        assert _get_upstream_stage("my-app", "model_workflow") == "model_system"
+        assert _next_stage("my-app") == "model_system"
 
-    def test_design_upstream_is_model_domain_in_domain_system_topology(self, prd_artifacts_dir):
+    def test_returns_none_when_prd_predates_archetype_classification(self, prd_artifacts_dir):
+        """PRD approved but has no archetype fields — topology undetermined."""
+        # Write PRD without archetype fields by patching the file directly
         handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        assert _get_upstream_stage("my-app", "design") == "model_domain"
-
-    def test_returns_none_when_no_approved_prd(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input(slug="my-app"))
-        # draft PRD — topology undetermined → None, not a legacy fallback
-        assert _get_upstream_stage("my-app", "design") is None
-
-
-class TestUniversalUpstream:
-    """
-    Directly tests _universal_upstream — the function that short-circuits
-    slug-specific topology resolution for stages present in all topologies
-    with the same predecessor.
-    """
-
-    def test_prd_has_universal_upstream_brief(self):
-        assert _universal_upstream("prd") == "brief"
-
-    def test_tech_stack_has_universal_upstream_design(self):
-        assert _universal_upstream("tech_stack") == "design"
-
-    def test_design_returns_none_different_predecessors_per_archetype(self):
-        # design follows model_domain, model_data_flow, model_system, or model_workflow
-        assert _universal_upstream("design") is None
-
-    def test_model_domain_returns_none_not_in_all_topologies(self):
-        assert _universal_upstream("model_domain") is None
-
-    def test_brief_returns_none_entry_stage_not_in_topologies_as_non_first(self):
-        # brief is the first stage in every topology (index 0, no predecessor)
-        assert _universal_upstream("brief") is None
+        prd_path = prd_artifacts_dir / "my-app" / "prd" / "v1.json"
+        prd_artifact = json.loads(prd_path.read_text())
+        prd_artifact["status"] = "approved"
+        prd_artifact["content"].pop("primary_archetype", None)
+        prd_artifact["content"].pop("secondary_archetype", None)
+        prd_path.write_text(json.dumps(prd_artifact, indent=2))
+        assert _next_stage("my-app") is None
 
 
 class TestTopologyAwareGetAvailableArtifacts:
@@ -612,42 +621,3 @@ class TestTopologyAwareGetAvailableArtifacts:
         assert "my-app" in ready_workflow
 
 
-class TestUpstreamChangedSignal:
-    """
-    Verifies that get_available_artifacts surfaces upstream_changed: true on an
-    approved artifact when the latest approved upstream was updated after it.
-    """
-
-    def test_upstream_changed_true_when_upstream_re_approved_later(self, artifacts_dir):
-        """Approved PRD shows upstream_changed when its Brief was updated later.
-
-        Uses prd stage (upstream=brief) — universally resolvable without slug-specific
-        topology. The signal logic is identical regardless of stage.
-        """
-        handle_write_brief(make_brief_input(slug="my-app"))
-        handle_approve_brief(str(artifacts_dir / "my-app" / "brief" / "v1.json"))
-        handle_write_prd(make_prd_input(slug="my-app"))
-        handle_approve_prd(str(artifacts_dir / "my-app" / "prd" / "v1.json"))
-
-        # Patch brief updated_at to be clearly after prd updated_at
-        brief_path = artifacts_dir / "my-app" / "brief" / "v1.json"
-        brief_artifact = json.loads(brief_path.read_text())
-        brief_artifact["updated_at"] = "2099-01-01T00:00:00+00:00"
-        brief_path.write_text(json.dumps(brief_artifact, indent=2))
-
-        result = get_available_artifacts("prd")
-        approved = {e["slug"]: e for e in result["approved"]}
-        assert "my-app" in approved
-        assert approved["my-app"].get("upstream_changed") is True
-        assert "brief" in approved["my-app"]["upstream_changed_note"]
-
-    def test_upstream_changed_absent_when_upstream_not_newer(self, artifacts_dir):
-        handle_write_brief(make_brief_input(slug="my-app"))
-        handle_approve_brief(str(artifacts_dir / "my-app" / "brief" / "v1.json"))
-        handle_write_prd(make_prd_input(slug="my-app"))
-        handle_approve_prd(str(artifacts_dir / "my-app" / "prd" / "v1.json"))
-
-        result = get_available_artifacts("prd")
-        approved = {e["slug"]: e for e in result["approved"]}
-        assert "my-app" in approved
-        assert "upstream_changed" not in approved["my-app"]
