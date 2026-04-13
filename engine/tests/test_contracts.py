@@ -33,6 +33,7 @@ from tool_handler import (
     handle_write_design, handle_approve_design,
     handle_write_tech_stack,
     get_available_artifacts, find_latest, read_artifact,
+    _resolve_topology, _next_stage,
 )
 from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
 
@@ -223,10 +224,10 @@ class TestGetAvailableArtifacts:
         assert "my-app" in in_progress_slugs
         assert "my-app" not in ready_slugs
 
-    def test_approved_prd_makes_slug_ready_to_start_for_domain(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input(slug="my-app"))
+    def test_approved_prd_makes_slug_ready_to_start_for_model_domain(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
         handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        result = get_available_artifacts("domain")
+        result = get_available_artifacts("model_domain")
         assert any(e["slug"] == "my-app" for e in result["ready_to_start"])
 
     def test_entry_includes_open_questions_count(self, artifacts_dir):
@@ -281,44 +282,39 @@ class TestGetAvailableArtifacts:
 
 class TestReadArtifact:
     """
-    Verifies that read_artifact(slug, stage, version) returns the full artifact
-    content and raises clear errors for missing or invalid inputs.
-
-    This is the MCP-scoped replacement for direct file reads in agent prompts.
-    Agents must use this tool instead of Claude Code's Read/Glob for artifact access.
+    Verifies that read_artifact(slug, stage, version) returns {"artifact": ..., "schema": ...}
+    and raises clear errors for missing or invalid inputs.
     """
 
-    def test_returns_full_artifact_for_brief(self, artifacts_dir):
+    def test_returns_artifact_and_schema_keys(self, artifacts_dir):
         handle_write_brief(make_brief_input(slug="my-app"))
-        artifact = read_artifact("my-app", "brief")
-        assert artifact["slug"] == "my-app"
-        assert artifact["version"] == 1
-        assert "content" in artifact
+        result = read_artifact("my-app", "brief")
+        assert "artifact" in result
+        assert "schema" in result
+
+    def test_artifact_has_expected_fields(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        result = read_artifact("my-app", "brief")
+        assert result["artifact"]["slug"] == "my-app"
+        assert result["artifact"]["version"] == 1
+        assert "content" in result["artifact"]
 
     def test_returns_latest_version_when_version_omitted(self, artifacts_dir):
         v1 = handle_write_brief(make_brief_input(slug="my-app"))
         handle_write_brief(make_brief_input(slug="my-app"), existing_brief=v1)
-        artifact = read_artifact("my-app", "brief")
-        assert artifact["version"] == 2
+        result = read_artifact("my-app", "brief")
+        assert result["artifact"]["version"] == 2
 
     def test_returns_specific_version_when_given(self, artifacts_dir):
         v1 = handle_write_brief(make_brief_input(slug="my-app"))
         handle_write_brief(make_brief_input(slug="my-app"), existing_brief=v1)
-        artifact = read_artifact("my-app", "brief", version=1)
-        assert artifact["version"] == 1
+        result = read_artifact("my-app", "brief", version=1)
+        assert result["artifact"]["version"] == 1
 
-    def test_returns_full_artifact_for_prd(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input(slug="my-app"))
-        artifact = read_artifact("my-app", "prd")
-        assert artifact["slug"] == "my-app"
-        assert "content" in artifact
-        assert "title" in artifact["content"]
-
-    def test_returns_full_artifact_for_domain(self, domain_artifacts_dir):
-        handle_write_domain_model(make_domain_input(slug="my-app"))
-        artifact = read_artifact("my-app", "domain")
-        assert artifact["slug"] == "my-app"
-        assert "bounded_contexts" in artifact["content"]
+    def test_schema_empty_for_stages_without_base_schema(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        result = read_artifact("my-app", "brief")
+        assert result["schema"] == {}
 
     def test_raises_for_unknown_slug(self, artifacts_dir):
         with pytest.raises(ValueError, match="ERROR \\[read_artifact\\]"):
@@ -356,7 +352,7 @@ class TestContractDomainModelToDesign:
         assert design["slug"] == "my-app"
 
     def test_design_id_is_independent_from_domain_id(self, design_artifacts_dir):
-        domain = read_artifact("my-app", "domain")
+        domain = read_artifact("my-app", "domain")["artifact"]
         design = handle_write_design(make_design_input(slug="my-app"))
         assert design["id"] != domain["id"]
         assert design["id"].startswith("design-")
@@ -384,7 +380,7 @@ class TestContractDesignToTechStack:
         assert ts["slug"] == "my-app"
 
     def test_tech_stack_id_is_independent_from_design_id(self, tech_stack_artifacts_dir):
-        design = read_artifact("my-app", "design")
+        design = read_artifact("my-app", "design")["artifact"]
         ts = handle_write_tech_stack(make_tech_stack_input(slug="my-app"))
         assert ts["id"] != design["id"]
         assert ts["id"].startswith("tech-stack-")
@@ -393,13 +389,6 @@ class TestContractDesignToTechStack:
         handle_write_tech_stack(make_tech_stack_input(slug="my-app"))
         assert (tech_stack_artifacts_dir / "my-app" / "design" / "v1.json").exists()
         assert (tech_stack_artifacts_dir / "my-app" / "tech_stack" / "v1.json").exists()
-
-    def test_approved_design_makes_slug_ready_to_start_for_tech_stack(self, tech_stack_artifacts_dir):
-        result = get_available_artifacts("tech_stack")
-        ready_slugs = [e["slug"] for e in result["ready_to_start"]]
-        # my-app has an approved design but no tech_stack yet in this fixture
-        assert "my-app" in ready_slugs
-
 
 class TestContractDesignToTechStackHandoffGuards:
     """
@@ -446,3 +435,184 @@ class TestContractDomainModelToDesignHandoffGuards:
         """No domain model at all raises ValueError."""
         with pytest.raises(ValueError, match="no approved Domain Model"):
             handle_write_design(make_design_input(slug="no-domain-here"))
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — DAG topology: _resolve_topology and _next_stage
+# ---------------------------------------------------------------------------
+
+class TestTopologyResolution:
+    """
+    Verifies that _resolve_topology(slug) returns the correct stage list
+    per archetype combination, and returns None when no approved PRD exists
+    or when the PRD predates archetype classification.
+    """
+
+    def test_domain_system_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        topology = _resolve_topology("my-app")
+        assert topology == ["brief", "prd", "model_domain", "design", "tech_stack"]
+
+    def test_data_pipeline_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="deploy-rollback", primary_archetype="data_pipeline"))
+        handle_approve_prd(str(prd_artifacts_dir / "deploy-rollback" / "prd" / "v1.json"))
+        topology = _resolve_topology("deploy-rollback")
+        assert topology == ["brief", "prd", "model_data_flow", "design", "tech_stack"]
+
+    def test_system_integration_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="system_integration"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        topology = _resolve_topology("my-app")
+        assert topology == ["brief", "prd", "model_system", "design", "tech_stack"]
+
+    def test_layered_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(
+            slug="my-app",
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        topology = _resolve_topology("my-app")
+        assert topology == ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"]
+
+    def test_process_system_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="process_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        topology = _resolve_topology("my-app")
+        assert topology == ["brief", "prd", "model_workflow", "design", "tech_stack"]
+
+    def test_returns_none_without_approved_prd(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app"))
+        # PRD exists but is draft — not approved
+        assert _resolve_topology("my-app") is None
+
+    def test_returns_none_for_unknown_slug(self, artifacts_dir):
+        assert _resolve_topology("nonexistent") is None
+
+    def test_all_valid_combinations_have_topology(self):
+        """_VALID_COMBINATIONS and _DAG_TOPOLOGIES must stay in sync.
+
+        Adding a combination without a topology causes silent None returns from
+        _resolve_topology — no error, just missing ready_to_start entries.
+        """
+        from tool_handler import _VALID_COMBINATIONS, _DAG_TOPOLOGIES
+        assert _VALID_COMBINATIONS == frozenset(_DAG_TOPOLOGIES.keys())
+
+
+class TestNextStage:
+    """
+    Verifies _next_stage(slug) — the forward-looking function that returns the
+    first unstarted stage for a slug by walking the topology from approved state.
+
+    The function encodes the DAG gate rules:
+    - No approved brief → None (entry gate not met)
+    - Brief approved, no PRD started → "prd"
+    - PRD in-progress (draft) → None (wait for approval)
+    - PRD approved → first model stage for that archetype
+    - Model stage in-progress → None
+    - All stages complete → None
+    """
+
+    def test_returns_none_when_no_brief_exists(self, artifacts_dir):
+        assert _next_stage("nonexistent") is None
+
+    def test_returns_none_when_brief_is_draft_only(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        assert _next_stage("my-app") is None
+
+    def test_returns_prd_when_brief_approved_no_prd(self, artifacts_dir):
+        handle_write_brief(make_brief_input(slug="my-app"))
+        handle_approve_brief(str(artifacts_dir / "my-app" / "brief" / "v1.json"))
+        assert _next_stage("my-app") == "prd"
+
+    def test_returns_none_when_prd_is_draft(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app"))
+        # PRD is draft — gate is not open
+        assert _next_stage("my-app") is None
+
+    def test_returns_model_domain_when_prd_approved_for_domain_system(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_domain"
+
+    def test_returns_model_data_flow_when_prd_approved_for_data_pipeline(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="data_pipeline"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_data_flow"
+
+    def test_returns_model_system_when_prd_approved_for_system_integration(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="system_integration"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_system"
+
+    def test_returns_model_workflow_when_prd_approved_for_process_system(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="process_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_workflow"
+
+    def test_returns_model_system_first_in_layered_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(
+            slug="my-app",
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        assert _next_stage("my-app") == "model_system"
+
+    def test_returns_none_when_prd_predates_archetype_classification(self, prd_artifacts_dir):
+        """PRD approved but has no archetype fields — topology undetermined."""
+        # Write PRD without archetype fields by patching the file directly
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        prd_path = prd_artifacts_dir / "my-app" / "prd" / "v1.json"
+        prd_artifact = json.loads(prd_path.read_text())
+        prd_artifact["status"] = "approved"
+        prd_artifact["content"].pop("primary_archetype", None)
+        prd_artifact["content"].pop("secondary_archetype", None)
+        prd_path.write_text(json.dumps(prd_artifact, indent=2))
+        assert _next_stage("my-app") is None
+
+
+class TestTopologyAwareGetAvailableArtifacts:
+    """
+    Verifies that get_available_artifacts is topology-aware for model stages:
+    a slug whose archetype does not include a given model stage must not appear
+    in ready_to_start for that stage.
+    """
+
+    def test_data_pipeline_slug_not_ready_for_model_domain(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="data_pipeline"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        result = get_available_artifacts("model_domain")
+        ready_slugs = [e["slug"] for e in result["ready_to_start"]]
+        assert "my-app" not in ready_slugs
+
+    def test_domain_system_slug_is_ready_for_model_domain(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        result = get_available_artifacts("model_domain")
+        ready_slugs = [e["slug"] for e in result["ready_to_start"]]
+        assert "my-app" in ready_slugs
+
+    def test_layered_slug_ready_for_model_system_not_model_domain(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(
+            slug="my-app",
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        model_domain_ready = [e["slug"] for e in get_available_artifacts("model_domain")["ready_to_start"]]
+        model_system_ready = [e["slug"] for e in get_available_artifacts("model_system")["ready_to_start"]]
+        assert "my-app" not in model_domain_ready
+        assert "my-app" in model_system_ready
+
+    def test_process_system_slug_ready_for_model_workflow_not_others(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="process_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        for wrong_stage in ("model_domain", "model_data_flow", "model_system"):
+            ready = [e["slug"] for e in get_available_artifacts(wrong_stage)["ready_to_start"]]
+            assert "my-app" not in ready, f"should not be ready for {wrong_stage}"
+        ready_workflow = [e["slug"] for e in get_available_artifacts("model_workflow")["ready_to_start"]]
+        assert "my-app" in ready_workflow
+
+

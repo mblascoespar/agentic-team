@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tool_handler import handle_write_prd, handle_write_domain_model, handle_write_brief, handle_write_design, handle_write_tech_stack
+from tool_handler import handle_write_prd, handle_write_domain_model, handle_write_brief, handle_write_design, handle_write_tech_stack, handle_update_schema, _ensure_instance_schema
 from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
 
 pytestmark = pytest.mark.invariant
@@ -1029,3 +1029,33 @@ def test_tech_stack_v1_fails_without_approved_design(design_artifacts_dir):
     """Engine gate: write_tech_stack v1 raises ValueError when no approved design exists."""
     with pytest.raises(ValueError, match="no approved Design artifact"):
         handle_write_tech_stack(make_tech_stack_input(slug="no-design-here"))
+
+
+# ---------------------------------------------------------------------------
+# update_schema — input validation
+# ---------------------------------------------------------------------------
+
+def test_update_schema_rejects_duplicate_field(artifacts_dir):
+    """Adding a field that already exists in the schema must raise."""
+    _ensure_instance_schema("my-app", "model_domain")
+    handle_update_schema("my-app", "model_domain", "extra_field", "optional", "Some field")
+    with pytest.raises(ValueError, match="already exists"):
+        handle_update_schema("my-app", "model_domain", "extra_field", "optional", "Duplicate")
+
+
+def test_update_schema_rejects_invalid_kind(artifacts_dir):
+    _ensure_instance_schema("my-app", "model_domain")
+    with pytest.raises(ValueError, match="kind must be"):
+        handle_update_schema("my-app", "model_domain", "new_field", "required", "Some field")
+
+
+def test_update_schema_rejects_empty_description(artifacts_dir):
+    _ensure_instance_schema("my-app", "model_domain")
+    with pytest.raises(ValueError, match="description must not be empty"):
+        handle_update_schema("my-app", "model_domain", "new_field", "optional", "")
+
+
+def test_update_schema_rejects_missing_schema_file(artifacts_dir):
+    """Stage that has never been written has no schema.json — must raise."""
+    with pytest.raises(ValueError, match="no schema found"):
+        handle_update_schema("my-app", "model_domain", "new_field", "optional", "Some field")

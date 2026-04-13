@@ -37,7 +37,6 @@ _VALID_COMBINATIONS: frozenset[tuple] = frozenset({
     ("system_integration", "process_system"),
 })
 
-# TODO(step-2): consumed by DAG router in get_available_artifacts topology resolution
 _DAG_TOPOLOGIES: dict[tuple, list[str]] = {
     ("domain_system",):                       ["brief", "prd", "model_domain",    "design", "tech_stack"],
     ("data_pipeline",):                       ["brief", "prd", "model_data_flow", "design", "tech_stack"],
@@ -60,17 +59,13 @@ _TECH_STACK_CONTENT_KEYS = ("adrs", "open_questions")
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 
-# ---------------------------------------------------------------------------
-# DAG topology — single source of truth for stage ordering
-# Agents never see this; the engine uses it for upstream resolution and
-# get_available_artifacts queries.
-# ---------------------------------------------------------------------------
-
-_UPSTREAM_STAGE: dict[str, str] = {
-    "prd":        "brief",
-    "domain":     "prd",
-    "design":     "domain",
-    "tech_stack": "design",
+# Model stages that have a base schema in engine/schemas/.
+# Other stages (brief, prd, domain, design, tech_stack) use an empty schema.
+_BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
+    "model_domain":    "model-domain.json",
+    "model_data_flow": "model-data-flow.json",
+    "model_system":    "model-system.json",
+    "model_workflow":  "model-workflow.json",
 }
 
 # ---------------------------------------------------------------------------
@@ -144,7 +139,137 @@ def read_artifact(slug: str, stage: str, version: int | None = None) -> dict:
             raise ValueError(
                 f"ERROR [read_artifact]: version {version} not found for slug '{slug}', stage '{stage}'."
             )
-    return json.loads(path.read_text())
+    artifact = json.loads(path.read_text())
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    schema = json.loads(schema_path.read_text()) if schema_path.exists() else {}
+    return {"artifact": artifact, "schema": schema}
+
+
+# ---------------------------------------------------------------------------
+# Instance schema helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_instance_schema(slug: str, stage: str) -> None:
+    """Create schema.json for slug/stage if it does not exist yet.
+
+    Copies the base schema from engine/schemas/ when one is defined for the
+    stage. Falls back to an empty schema for stages without a base schema.
+    Called on the first write_* for a slug/stage — idempotent on subsequent calls.
+    """
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    if schema_path.exists():
+        return
+    base_filename = _BASE_SCHEMAS_BY_STAGE.get(stage)
+    if base_filename is not None:
+        base_schema = json.loads((_SCHEMAS_DIR / base_filename).read_text())
+    else:
+        base_schema = {"fields": {}}
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(json.dumps(base_schema, indent=2))
+
+
+def handle_update_schema(slug: str, stage: str, field_name: str, kind: str, description: str) -> dict:
+    """Add a field to the instance schema for slug/stage.
+
+    Rejects: field already exists, kind not in {mandatory, optional}, empty
+    field_name, empty description. Auto-appends a decision_log entry to the
+    schema file with trigger: "schema_field_added".
+    """
+    _validate_slug_format(slug, "update_schema")
+
+    if kind not in {"mandatory", "optional"}:
+        raise ValueError(
+            f"ERROR [update_schema]: kind must be 'mandatory' or 'optional', got '{kind}'."
+        )
+    if not field_name or not field_name.strip():
+        raise ValueError("ERROR [update_schema]: field_name must not be empty.")
+    if not description or not description.strip():
+        raise ValueError("ERROR [update_schema]: description must not be empty.")
+
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    if not schema_path.exists():
+        raise ValueError(
+            f"ERROR [update_schema]: no schema found for slug '{slug}', stage '{stage}'. "
+            f"The stage must be written at least once before the schema can be updated."
+        )
+
+    schema = json.loads(schema_path.read_text())
+    fields = schema.setdefault("fields", {})
+
+    if field_name in fields:
+        raise ValueError(
+            f"ERROR [update_schema]: field '{field_name}' already exists in the schema for "
+            f"slug '{slug}', stage '{stage}'. Choose a different name."
+        )
+
+    fields[field_name] = {"kind": kind, "description": description.strip()}
+    schema.setdefault("decision_log", []).append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trigger": "schema_field_added",
+        "field_name": field_name,
+        "kind": kind,
+        "description": description.strip(),
+    })
+
+    schema_path.write_text(json.dumps(schema, indent=2))
+    return schema
+
+
+def _resolve_topology(slug: str) -> list[str] | None:
+    """Return the ordered DAG stage list for slug, or None if undetermined.
+
+    Reads the approved PRD to extract the archetype combination, then looks
+    up _DAG_TOPOLOGIES. Returns None when no approved PRD exists or when the
+    PRD predates archetype classification (migration period).
+    """
+    prd_path = find_latest(slug, "prd", status="approved")
+    if prd_path is None:
+        return None
+    content = json.loads(prd_path.read_text()).get("content", {})
+    primary = content.get("primary_archetype")
+    if primary is None:
+        return None
+    secondary = content.get("secondary_archetype")
+    combo = (primary, secondary) if secondary else (primary,)
+    topology = _DAG_TOPOLOGIES.get(combo)
+    return list(topology) if topology is not None else None
+
+
+def _next_stage(slug: str) -> str | None:
+    """Return the next unstarted stage for slug by walking topology forward.
+
+    Scans the slug's artifact state from the brief forward. Returns the first
+    stage that has no artifact yet. Returns None when:
+    - No approved brief exists (entry gate not met)
+    - A stage is in-progress (not yet approved — one stage active at a time)
+    - The topology cannot be determined (no approved PRD, or pre-archetype PRD)
+    - All topology stages are already approved
+
+    Brief is the DAG entry node and is never returned: briefs are created by the
+    Brainstormer, not queued up as ready-to-start.
+    """
+    if find_latest(slug, "brief", status="approved") is None:
+        return None
+
+    prd_path = find_latest(slug, "prd")
+    if prd_path is None:
+        return "prd"
+
+    if json.loads(prd_path.read_text()).get("status") != "approved":
+        return None  # PRD in-progress — wait for approval
+
+    topology = _resolve_topology(slug)
+    if topology is None:
+        return None  # PRD approved but predates archetype classification
+
+    prd_idx = topology.index("prd")
+    for stage in topology[prd_idx + 1:]:
+        path = find_latest(slug, stage)
+        if path is None:
+            return stage  # First stage with no artifact yet
+        if json.loads(path.read_text()).get("status") != "approved":
+            return None  # Stage in-progress — wait
+    return None  # All stages complete
 
 
 def get_available_artifacts(stage: str) -> dict:
@@ -152,8 +277,9 @@ def get_available_artifacts(stage: str) -> dict:
 
     - in_progress: draft artifacts at this stage
     - approved: approved artifacts at this stage
-    - ready_to_start: slugs whose upstream stage artifact is approved but
-      this stage has no artifact yet (entry-node stages have no ready_to_start)
+    - ready_to_start: slugs where _next_stage(slug) == stage — the immediate
+      upstream is approved and this stage has no artifact yet; topology-correct
+      (slugs whose archetype does not include this stage never appear here)
     """
     artifacts_dir = _get_artifacts_dir()
     result: dict = {"in_progress": [], "approved": [], "ready_to_start": []}
@@ -179,8 +305,7 @@ def get_available_artifacts(stage: str) -> dict:
             else:
                 result["approved"].append(entry)
         else:
-            upstream_stage = _UPSTREAM_STAGE.get(stage)
-            if upstream_stage and find_latest(slug, upstream_stage, status="approved"):
+            if _next_stage(slug) == stage:
                 result["ready_to_start"].append({"slug": slug})
 
     return result

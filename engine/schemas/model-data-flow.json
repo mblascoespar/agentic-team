@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "sources": {
+      "kind": "mandatory",
+      "description": "Input data sources with schema, volume, and delivery characteristics"
+    },
+    "stages": {
+      "kind": "mandatory",
+      "description": "Processing stages with transformations, failure modes, and idempotency guarantees"
+    },
+    "sinks": {
+      "kind": "mandatory",
+      "description": "Output destinations with schema and delivery guarantees"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved questions to be addressed before approval"
+    }
+  }
+}

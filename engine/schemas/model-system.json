@@ -1,0 +1,20 @@
+{
+  "fields": {
+    "systems": {
+      "kind": "mandatory",
+      "description": "External systems involved: what you own vs what you don't, and what each does"
+    },
+    "integrations": {
+      "kind": "mandatory",
+      "description": "Integration contracts between systems: protocols, data shapes, auth, rate limits"
+    },
+    "constraints": {
+      "kind": "mandatory",
+      "description": "Hard constraints imposed by external systems that the workflow model must respect"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved questions to be addressed before approval"
+    }
+  }
+}

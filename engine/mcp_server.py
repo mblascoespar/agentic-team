@@ -16,6 +16,7 @@ from tool_handler import (
     handle_write_brief, handle_approve_brief,
     handle_write_design, handle_approve_design,
     handle_write_tech_stack, handle_approve_tech_stack,
+    handle_update_schema,
     get_available_artifacts, read_artifact,
 )
 from renderer import render_prd, render_domain_model, render_brief, render_design, render_tech_stack
@@ -178,6 +179,25 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="update_schema",
+            description=(
+                "Add a field to the instance schema for a slug/stage. "
+                "Use this when you discover a field that belongs in the artifact but is not in the base schema. "
+                "The field will be validated at approval time if kind is 'mandatory'."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["slug", "stage", "field_name", "kind", "description"],
+                "properties": {
+                    "slug": {"type": "string"},
+                    "stage": {"type": "string"},
+                    "field_name": {"type": "string", "description": "Name of the new field."},
+                    "kind": {"type": "string", "enum": ["mandatory", "optional"]},
+                    "description": {"type": "string", "description": "What this field captures and why it matters."},
+                },
+            },
+        ),
     ]
 
 
@@ -291,6 +311,16 @@ async def _dispatch(name: str, arguments: dict) -> list[TextContent]:
     if name == "approve_tech_stack":
         artifact = handle_approve_tech_stack(arguments["artifact_path"])
         return [TextContent(type="text", text=f"Tech stack approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
+
+    if name == "update_schema":
+        schema = handle_update_schema(
+            arguments["slug"],
+            arguments["stage"],
+            arguments["field_name"],
+            arguments["kind"],
+            arguments["description"],
+        )
+        return [TextContent(type="text", text=json.dumps(schema, indent=2))]
 
     return [TextContent(type="text", text=f"ERROR: unknown tool '{name}'")]
 

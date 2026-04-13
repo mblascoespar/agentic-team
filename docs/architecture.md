@@ -16,6 +16,8 @@ A production-grade multi-agent system where:
 
 ## DAG
 
+The topology varies by archetype. The first two stages and last two stages are fixed; the model stage(s) in the middle depend on the PRD archetype combination.
+
 ```
 [User Idea]
      │
@@ -29,21 +31,24 @@ A production-grade multi-agent system where:
 ┌─────────────────┐
 │  Product Agent  │  Brief → PRD artifact             [IMPLEMENTED]
 └────────┬────────┘
-         │ prd.json (approved)
+         │ prd.json (approved, declares archetype)
+         ▼
+         ├─ domain_system ──────────────────► model_domain/    [STEP 4]
+         ├─ data_pipeline ──────────────────► model_data_flow/ [STEP 4]
+         ├─ system_integration ─────────────► model_system/    [STEP 4]
+         ├─ process_system ─────────────────► model_workflow/  [STEP 4]
+         └─ system_integration+process_system► model_system/ → model_workflow/ [STEP 4]
+         │
+         │ model_*.json (approved)
          ▼
 ┌─────────────────┐
-│  Domain Agent   │  PRD → Domain Model artifact      [IMPLEMENTED]
-└────────┬────────┘
-         │ domain.json (approved)
-         ▼
-┌─────────────────┐
-│ Architecture    │  Domain Model → Design artifact   [IMPLEMENTED]
+│ Architecture    │  Model → Design artifact          [STEP 6]
 │    Agent        │
 └────────┬────────┘
          │ design.json (approved)
          ▼
 ┌─────────────────┐
-│ Tech Stack      │  Design → Tech Stack artifact     [IMPLEMENTED]
+│ Tech Stack      │  Design → Tech Stack artifact     [STEP 7]
 │    Agent        │
 └────────┬────────┘
          │ tech_stack.json (approved)
@@ -59,7 +64,9 @@ A production-grade multi-agent system where:
 └─────────────────┘
 ```
 
-Human approval gates at: Brief, PRD, Domain Model, Architecture, Tech Stack.
+Human approval gates at: Brief, PRD, Model (one or two gates depending on archetype), Design, Tech Stack.
+
+**Topology source of truth:** `_DAG_TOPOLOGIES` in `engine/tool_handler.py`. Must stay in sync with `_VALID_COMBINATIONS`.
 
 ---
 
@@ -196,7 +203,7 @@ artifacts/<slug>/prd/v<n>.json
 | File | Purpose |
 |------|---------|
 | `engine/mcp_server.py` | MCP server — exposes all tools to Claude Code |
-| `engine/tool_handler.py` | Deterministic artifact write/approve logic; DAG topology (`_UPSTREAM_STAGE`); `find_latest`; `get_available_artifacts` |
+| `engine/tool_handler.py` | Deterministic artifact write/approve logic; DAG topology (`_DAG_TOPOLOGIES`, `_resolve_topology`, `_next_stage`); `find_latest`; `get_available_artifacts` |
 | `engine/renderer.py` | Human-readable artifact formatters |
 | `.claude/commands/brainstorm.md` | Brainstormer Agent system prompt |
 | `.claude/commands/product-owner.md` | Product Agent system prompt |
@@ -454,10 +461,22 @@ Beyond JSON schema validation, the handler enforces:
 **Tradeoff:** Relies on prompt guidance to correctly populate; not structurally enforced.
 
 ### DAG topology is engine-private; agents work in slugs only
-**Decision:** The DAG edge ordering (`_UPSTREAM_STAGE`) lives exclusively in `tool_handler.py`. It is never exposed in any API response or agent prompt. Agents pass only a `slug` to `write_*` tools; the engine resolves the upstream artifact path internally using `find_latest(slug, upstream_stage, status="approved")`.
+**Decision:** The DAG edge ordering (`_DAG_TOPOLOGIES`) lives exclusively in `tool_handler.py`. It is never exposed in any API response or agent prompt. Agents pass only a `slug` to `write_*` tools; the engine resolves the upstream artifact path internally using `find_latest(slug, upstream_stage, status="approved")`.
 **Why:** Path resolution is topology knowledge. Encoding it in agent prompts duplicates it N times and makes every prompt a maintenance surface for DAG structure changes. The engine is the right owner.
 **Consequence:** `brief_path` removed from `write_prd` input schema; `prd_path` removed from `write_domain_model` input schema. `references` is now always engine-populated. PRD `references` field was previously always `[]` — this is also fixed.
 **Tradeoff:** The engine must read upstream artifacts on every `write_*` v1 call to derive the reference. This is a trivial I/O cost; correctness is the priority.
+
+### PRD archetype classification and lock (Step 1)
+**Decision:** PRDs carry four archetype fields: `primary_archetype`, `secondary_archetype` (optional), `archetype_confidence`, and `archetype_reasoning`. `primary_archetype` and `archetype_reasoning` are locked on v1 — the engine overwrites any agent-provided values on v2+. `archetype_confidence` may be revised on refinements. `secondary_archetype` once absent cannot be added on refinement.
+**Why:** Archetype determines DAG topology. If an agent could change the archetype mid-refinement, the slug could silently switch topology mid-run — previous artifacts would be stranded in the wrong stage directories. The lock is an invariant, not a suggestion.
+**Valid combinations:** Defined in `_VALID_COMBINATIONS`. Must stay in sync with `_DAG_TOPOLOGIES`. The only supported layered case is `system_integration + process_system`.
+**Enforcement:** `handle_write_prd` v1 validates the combination before the brief gate check (cheap, stateless). On v2+, the engine reads the locked values from the existing artifact and overwrites the agent's input.
+
+### Forward-looking `get_available_artifacts` via `_next_stage` (Step 2)
+**Decision:** `get_available_artifacts(stage)` determines whether a slug is `ready_to_start` for a stage by calling `_next_stage(slug)` — a forward scan that walks the topology from approved state and returns the first unstarted stage.
+**Why:** The backward-looking approach ("find the upstream stage, check if it's approved") requires resolving upstream stage names per archetype, which led to `_universal_upstream` complexity. The forward-looking approach is simpler: scan what's approved, return what comes next. Topology routing for the `ready_to_start` bucket is a free consequence — a slug whose archetype omits a stage will never have `_next_stage` return it.
+**Approved artifacts are immutable.** There is no `upstream_changed` signal. If an upstream is re-approved (unlikely — approval is a deliberate human act), the human re-initiates the downstream stage. `_next_stage` handles this naturally: the downstream stage shows as `ready_to_start` again.
+**Gate sequence enforced by `_next_stage`:** No approved brief → None. Brief approved, no PRD → "prd". PRD draft → None. PRD approved → first model stage for archetype. Model in-progress → None. All stages done → None.
 
 ### `get_available_artifacts` — DAG state query
 **Decision:** A single MCP tool that, given a `stage`, returns three buckets: `in_progress` (draft artifacts at that stage), `approved` (approved artifacts), and `ready_to_start` (slugs where upstream is approved but this stage has no artifact yet).
@@ -517,6 +536,186 @@ All artifacts in the system share these fields and semantics. Every new artifact
 
 ---
 
+## Refactor: Multi-Archetype System
+
+*Design status: Steps 1–2 implemented. Steps 3–8 pending.*
+
+### Why This Refactor Exists
+
+The engine uses a single DAG topology for every initiative:
+```
+brief → prd → domain → design → tech_stack
+```
+This only works for domain-heavy systems. It fails for data pipelines, integrations, and process workflows — producing DDD artifacts (bounded contexts, CQRS, aggregates) for problems that don't need them.
+
+**Root cause:** Single topology. The engine cannot route differently based on problem type.
+
+---
+
+### Three Axes of Change
+
+| Axis | What it adds | Where it lives |
+|------|-------------|----------------|
+| Archetype classification | PRD declares problem type; engine validates and locks it | `handle_write_prd`, `prd.input.json` |
+| Topology-per-archetype | Engine selects the correct DAG per slug | `_DAG_TOPOLOGIES`, `_resolve_topology` |
+| Artifact template system | Instance schemas grow per-initiative; mandatory validation at approval only | `schema.json`, `handle_update_schema` |
+
+Miss any one → system breaks. Topology resolution needs archetype. Model routing needs topology. Approval validation needs instance schema.
+
+---
+
+### Supported Archetypes
+
+| Archetype | Problem type |
+|-----------|-------------|
+| `domain_system` | Rich business rules, aggregates, bounded contexts |
+| `data_pipeline` | Data transformation, stages, failure handling |
+| `system_integration` | Integration constraints, adapters, ownership boundaries |
+| `process_system` | Workflow execution, actors, state transitions |
+
+### Valid Combinations (engine-enforced)
+
+```python
+_VALID_COMBINATIONS = {
+    ("domain_system",),
+    ("data_pipeline",),
+    ("system_integration",),
+    ("process_system",),
+    ("system_integration", "process_system"),  # order is load-bearing
+}
+```
+
+Any other combination is a hard error on `write_prd` v1.
+
+---
+
+### DAG Topologies
+
+One topology list per archetype combination. Engine-private — never exposed to agents.
+
+```python
+_DAG_TOPOLOGIES = {
+    ("domain_system",):                       ["brief", "prd", "model_domain",    "design", "tech_stack"],
+    ("data_pipeline",):                       ["brief", "prd", "model_data_flow", "design", "tech_stack"],
+    ("system_integration",):                  ["brief", "prd", "model_system",    "design", "tech_stack"],
+    ("process_system",):                      ["brief", "prd", "model_workflow",  "design", "tech_stack"],
+    ("system_integration", "process_system"): ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"],
+}
+```
+
+Layered case (`system_integration + process_system`): two sequential model stages, each with its own human approval gate. `model_workflow` reads approved `model_system` as upstream input and encodes its constraints.
+
+---
+
+### New Stage: Model Agent
+
+Replaces the Domain Agent for non-`domain_system` archetypes. Single parameterized tool; `model_type` determines stage directory, schema, and upstream resolution.
+
+| Archetype | Stage directory | Model type |
+|-----------|----------------|------------|
+| `domain_system` | `model_domain/` | Domain Model (DDD — unchanged) |
+| `data_pipeline` | `model_data_flow/` | Data Flow Model |
+| `system_integration` | `model_system/` | System Model |
+| `process_system` | `model_workflow/` | Workflow Model |
+
+#### Model schemas
+
+**Domain Model** — unchanged from current domain artifact.
+
+**Data Flow Model**
+```
+mandatory: inputs, outputs, stages
+optional:  invariants, failure_modes, retry_strategy, idempotency, performance
+```
+
+**System Model**
+```
+mandatory: components, integration_points, constraints (hard + soft), control_map (can_modify / can_extend / read_only)
+optional:  ownership, invariants, failure_modes
+```
+
+**Workflow Model**
+```
+mandatory: actors, steps
+optional:  decision_points, inputs_outputs, metrics, failure_modes
+```
+
+---
+
+### Artifact Template System
+
+Every artifact stage for every slug has an **instance schema** stored alongside its artifact files:
+
+```
+artifacts/<slug>/model_data_flow/schema.json   ← instance schema
+artifacts/<slug>/model_data_flow/v1.json
+artifacts/<slug>/model_data_flow/v2.json
+```
+
+The instance schema starts as a copy of the base schema (`engine/schemas/`). It grows as agents propose new fields and humans approve them.
+
+**Three field kinds:**
+
+| Kind | Validation | When required |
+|------|-----------|---------------|
+| `mandatory` | Validated at approval only (not on intermediate writes) | Must be present to approve |
+| `optional` | Validated if present | Never required |
+
+**Schema update flow:**
+1. Agent discovers a missing concept mid-reasoning
+2. Agent proposes in conversation: field name, kind, plain-language description
+3. Human approves
+4. Agent calls `update_schema(slug, stage, field_name, kind, description)`
+5. Instance schema updated; decision_log entry auto-generated
+6. Agent includes field in next `write_model` call
+
+`read_artifact` always returns both artifact and instance schema:
+```json
+{ "artifact": { ... }, "schema": { ... } }
+```
+
+---
+
+### Mutability Model
+
+**Approved artifacts are immutable.** No re-open, no stale detection, no forced downstream invalidation.
+
+To change anything: go upstream, re-draft, approve, then regenerate all downstream stages forward. `find_latest` always returns the latest approved version — re-running a downstream stage picks up the new upstream automatically.
+
+`get_available_artifacts` is forward-looking: it calls `_next_stage(slug)` per slug to determine what's ready. Approved artifacts are immutable — there is no staleness signal.
+
+---
+
+### New / Changed MCP Tools
+
+| Tool | Change |
+|------|--------|
+| `write_model(slug, model_type, content, decision_log_entry)` | New. Routes to correct stage dir; validates model_type vs PRD archetype. |
+| `approve_model(artifact_path)` | New. Validates mandatory fields against instance schema before approving. |
+| `update_schema(slug, stage, field_name, kind, description)` | New. Adds field to instance schema. Rejects conflicts. Auto-logs decision. |
+| `read_artifact` | Now returns `{artifact, schema}` wrapper. |
+| `write_prd` | Validates archetype combination on v1. Locks archetype fields on v2+. |
+| `get_available_artifacts` | Topology-aware via `_next_stage`. Forward-looking: ready_to_start iff `_next_stage(slug) == stage`. |
+| `write_domain_model`, `approve_domain_model` | Removed from MCP server. Replaced by `write_model` / `approve_model`. |
+
+---
+
+### Key Decisions
+
+**Archetype locked on PRD v1**
+`primary_archetype` and `secondary_archetype` are carried forward unchanged on all subsequent PRD versions. Agent cannot change them on refinement. If the classification was wrong, go back and re-draft the PRD.
+*Why:* The topology is derived from archetype. If archetype could drift, the DAG would change mid-initiative — all downstream artifacts become inconsistent.
+
+**Mandatory validation at approval only**
+`write_model` does not validate mandatory field presence. Only `approve_model` does.
+*Why:* Agents work incrementally. Blocking writes on incomplete artifacts forces agents to produce everything in one shot, which breaks the challenge-refine loop.
+
+**One base schema per model type; one instance schema per slug/stage**
+Base schemas live in `engine/schemas/`. Instance schemas live in `artifacts/<slug>/<stage>/schema.json`.
+*Why:* Different initiatives of the same archetype may need different optional fields. The instance schema captures those per-initiative decisions without polluting the base schema.
+
+---
+
 ## Explicitly Out of Scope (for now)
 
 - Headless / API-only mode (no Claude Code)
@@ -535,7 +734,7 @@ All artifacts in the system share these fields and semantics. Every new artifact
 
 | Date | Change |
 |------|--------|
-| 2026-03-27 | Tech Stack Agent implemented: `write_tech_stack` + `approve_tech_stack` MCP tools, handler with rejection_reason semantic guard, renderer, `/tech-stack-agent` slash command with full deliberation session model (agenda confirmation, sequential deliberation, re-open flow). `_UPSTREAM_STAGE` updated with `tech_stack → design`. 73 new tests (378 total). |
+| 2026-03-27 | Tech Stack Agent implemented: `write_tech_stack` + `approve_tech_stack` MCP tools, handler with rejection_reason semantic guard, renderer, `/tech-stack-agent` slash command with full deliberation session model (agenda confirmation, sequential deliberation, re-open flow). 73 new tests (378 total). |
 | 2026-03-20 | Product Agent implemented (MCP tools, tool handler, renderer, system prompt) |
 | 2026-03-20 | Designer Agent extracted as `/design` slash command |
 | 2026-03-20 | 8 behavioral design principles added to design methodology |
@@ -550,4 +749,6 @@ All artifacts in the system share these fields and semantics. Every new artifact
 | 2026-03-23 | Brainstormer Agent implemented: `write_brief` + `approve_brief` MCP tools, tool handler, renderer, `/brainstorm` slash command with 9-phase session model and hard gate before `write_brief`. Brief is now the mandatory upstream input for the Product Agent (strict DAG gate — approved Brief required). `acceptance_criteria` added as required field per PRD feature. 196 tests total. |
 | 2026-03-25 | `read_artifact(slug, stage, version?)` MCP tool added — returns full artifact JSON by slug + stage + optional version (defaults to latest). Enables agent prompts to be scoped to MCP tools only for all artifact access; direct Claude Code file reads against artifacts are no longer needed or permitted. 9 new tests in `TestReadArtifact` (test_contracts.py). Architecture doc updated: MCP tools tables for all three agents, agent tool scope decision added. |
 | 2026-03-25 | Architecture Agent implemented: `write_design` + `approve_design` MCP tools, tool handler with semantic guards (acl_needed + cqrs_applied), renderer, `/architecture-agent` slash command with derivation rules table, auto-derived decisions, cascade refinement sequence, and all four test suites updated (invariant/lifecycle/contract/renderer). Option A (rules in prompt) adopted; Option C (hybrid engine derivation) planned as future pipeline project. |
-| 2026-03-25 | DAG topology made engine-private: `_UPSTREAM_STAGE` constant and `find_latest(slug, stage, status)` added to `tool_handler.py`. `brief_path` removed from `write_prd` schema; `prd_path` removed from `write_domain_model` schema — engine resolves upstream artifacts from slug automatically. `references` field now correctly populated on PRD v1 (was always `[]`). `get_available_artifacts(stage)` MCP tool added — returns in_progress/approved/ready_to_start buckets. All three agent prompts updated to use `get_available_artifacts` for no-argument entry point; no-arg menus now surface ready-to-start items from upstream. Tests need updating: `test_invariants.py` (remove brief_path/prd_path inputs), `test_lifecycle.py` (pre-approved upstream fixtures), `test_contracts.py` (new `TestGetAvailableArtifacts` class). |
+| 2026-04-13 | Step 2 complete: `_DAG_TOPOLOGIES` replaces `_UPSTREAM_STAGE`. `_resolve_topology(slug)` reads PRD archetype and returns the correct topology list. `get_available_artifacts` rewritten as forward-looking via `_next_stage(slug)` — emits slug as ready_to_start iff `_next_stage(slug) == stage`. Removed `_ENTRY_STAGES`, `_universal_upstream`, `_get_upstream_stage`, `upstream_changed`. 412 tests. |
+| 2026-04-12 | Step 1 complete: `primary_archetype`, `secondary_archetype`, `archetype_confidence`, `archetype_reasoning` added to PRD schema. `_VALID_COMBINATIONS` engine-enforced on `write_prd` v1. Archetype fields locked after v1 (carried forward, agent cannot override). Product Owner system prompt updated with classification challenge criteria. |
+| 2026-03-25 | DAG topology made engine-private: `find_latest(slug, stage, status)` added to `tool_handler.py`. `brief_path` removed from `write_prd` schema; `prd_path` removed from `write_domain_model` schema — engine resolves upstream artifacts from slug automatically. `references` field now correctly populated on PRD v1 (was always `[]`). `get_available_artifacts(stage)` MCP tool added — returns in_progress/approved/ready_to_start buckets. |

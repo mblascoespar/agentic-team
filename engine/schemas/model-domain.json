@@ -1,0 +1,16 @@
+{
+  "fields": {
+    "bounded_contexts": {
+      "kind": "mandatory",
+      "description": "Bounded contexts with aggregates, commands, queries, events, and invariants"
+    },
+    "context_map": {
+      "kind": "mandatory",
+      "description": "Typed relationships between bounded contexts"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved questions to be addressed before approval"
+    }
+  }
+}
