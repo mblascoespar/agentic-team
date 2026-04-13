@@ -33,7 +33,7 @@ from tool_handler import (
     handle_write_design, handle_approve_design,
     handle_write_tech_stack,
     get_available_artifacts, find_latest, read_artifact,
-    _resolve_topology, _get_upstream_stage,
+    _resolve_topology, _get_upstream_stage, _universal_upstream,
 )
 from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
 
@@ -488,6 +488,12 @@ class TestTopologyResolution:
         topology = _resolve_topology("my-app")
         assert topology == ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"]
 
+    def test_process_system_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="process_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        topology = _resolve_topology("my-app")
+        assert topology == ["brief", "prd", "model_workflow", "design", "tech_stack"]
+
     def test_returns_none_without_approved_prd(self, prd_artifacts_dir):
         handle_write_prd(make_prd_input(slug="my-app"))
         # PRD exists but is draft — not approved
@@ -496,11 +502,21 @@ class TestTopologyResolution:
     def test_returns_none_for_unknown_slug(self, artifacts_dir):
         assert _resolve_topology("nonexistent") is None
 
+    def test_all_valid_combinations_have_topology(self):
+        """_VALID_COMBINATIONS and _DAG_TOPOLOGIES must stay in sync.
+
+        Adding a combination without a topology causes silent None returns from
+        _resolve_topology — no error, just missing ready_to_start entries.
+        """
+        from tool_handler import _VALID_COMBINATIONS, _DAG_TOPOLOGIES
+        assert _VALID_COMBINATIONS == frozenset(_DAG_TOPOLOGIES.keys())
+
 
 class TestUpstreamStageResolution:
     """
     Verifies that _get_upstream_stage(slug, stage) returns the correct upstream
-    using topology for topology-aware stages and _UPSTREAM_STAGE fallback for legacy stages.
+    using _universal_upstream for stages common to all topologies, and slug-specific
+    topology resolution for archetype-specific stages.
     """
 
     def test_model_domain_upstream_is_prd(self, prd_artifacts_dir):
@@ -526,6 +542,31 @@ class TestUpstreamStageResolution:
         handle_write_prd(make_prd_input(slug="my-app"))
         # draft PRD — topology undetermined → None, not a legacy fallback
         assert _get_upstream_stage("my-app", "design") is None
+
+
+class TestUniversalUpstream:
+    """
+    Directly tests _universal_upstream — the function that short-circuits
+    slug-specific topology resolution for stages present in all topologies
+    with the same predecessor.
+    """
+
+    def test_prd_has_universal_upstream_brief(self):
+        assert _universal_upstream("prd") == "brief"
+
+    def test_tech_stack_has_universal_upstream_design(self):
+        assert _universal_upstream("tech_stack") == "design"
+
+    def test_design_returns_none_different_predecessors_per_archetype(self):
+        # design follows model_domain, model_data_flow, model_system, or model_workflow
+        assert _universal_upstream("design") is None
+
+    def test_model_domain_returns_none_not_in_all_topologies(self):
+        assert _universal_upstream("model_domain") is None
+
+    def test_brief_returns_none_entry_stage_not_in_topologies_as_non_first(self):
+        # brief is the first stage in every topology (index 0, no predecessor)
+        assert _universal_upstream("brief") is None
 
 
 class TestTopologyAwareGetAvailableArtifacts:
@@ -560,6 +601,15 @@ class TestTopologyAwareGetAvailableArtifacts:
         model_system_ready = [e["slug"] for e in get_available_artifacts("model_system")["ready_to_start"]]
         assert "my-app" not in model_domain_ready
         assert "my-app" in model_system_ready
+
+    def test_process_system_slug_ready_for_model_workflow_not_others(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="process_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        for wrong_stage in ("model_domain", "model_data_flow", "model_system"):
+            ready = [e["slug"] for e in get_available_artifacts(wrong_stage)["ready_to_start"]]
+            assert "my-app" not in ready, f"should not be ready for {wrong_stage}"
+        ready_workflow = [e["slug"] for e in get_available_artifacts("model_workflow")["ready_to_start"]]
+        assert "my-app" in ready_workflow
 
 
 class TestUpstreamChangedSignal:
