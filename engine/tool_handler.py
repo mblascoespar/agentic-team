@@ -23,7 +23,28 @@ _TECH_STACK_INPUT_SCHEMA   = json.loads((_SCHEMAS_DIR / "tech_stack.input.json")
 _PRD_CONTENT_KEYS = (
     "title", "problem", "target_users", "goals", "success_metrics",
     "scope_in", "scope_out", "features", "assumptions", "open_questions",
+    "primary_archetype", "secondary_archetype", "archetype_confidence", "archetype_reasoning",
 )
+
+# archetype_confidence intentionally omitted: agents may revise confidence on refinements
+_ARCHETYPE_LOCKED_KEYS = ("primary_archetype", "secondary_archetype", "archetype_reasoning")
+
+_VALID_COMBINATIONS: frozenset[tuple] = frozenset({
+    ("domain_system",),
+    ("data_pipeline",),
+    ("system_integration",),
+    ("process_system",),
+    ("system_integration", "process_system"),
+})
+
+# TODO(step-2): consumed by DAG router in get_available_artifacts topology resolution
+_DAG_TOPOLOGIES: dict[tuple, list[str]] = {
+    ("domain_system",):                       ["brief", "prd", "model_domain",    "design", "tech_stack"],
+    ("data_pipeline",):                       ["brief", "prd", "model_data_flow", "design", "tech_stack"],
+    ("system_integration",):                  ["brief", "prd", "model_system",    "design", "tech_stack"],
+    ("process_system",):                      ["brief", "prd", "model_workflow",  "design", "tech_stack"],
+    ("system_integration", "process_system"): ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"],
+}
 
 _BRIEF_CONTENT_KEYS = (
     "idea", "alternatives", "chosen_direction",
@@ -214,6 +235,31 @@ def _validate_approve_path(artifact_path: str, handler_name: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Archetype helpers
+# ---------------------------------------------------------------------------
+
+def _fmt_combinations() -> str:
+    parts = []
+    for combo in sorted(_VALID_COMBINATIONS):
+        if len(combo) == 1:
+            parts.append(f"primary={combo[0]!r}")
+        else:
+            parts.append(f"primary={combo[0]!r} + secondary={combo[1]!r}")
+    return ", ".join(parts)
+
+
+def _validate_archetype_combination(primary: str, secondary: str | None) -> None:
+    combo = (primary, secondary) if secondary else (primary,)
+    if combo not in _VALID_COMBINATIONS:
+        raise ValueError(
+            f"ERROR [write_prd]: unsupported archetype combination "
+            f"primary={primary!r} secondary={secondary!r}. "
+            f"Valid combinations: {_fmt_combinations()}"
+        )
+
+
+
+# ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
 
@@ -227,12 +273,19 @@ def handle_write_prd(tool_input: dict, existing_prd: dict | None = None) -> dict
 
     if existing_prd is None:
         slug = tool_input["slug"]
+        # Validate archetype combination before the Brief gate: stateless and cheap,
+        # so agents get the right error regardless of upstream artifact state.
+        primary = tool_input["primary_archetype"]
+        secondary = tool_input.get("secondary_archetype")
+        _validate_archetype_combination(primary, secondary)
+
         upstream = find_latest(slug, "brief", status="approved")
         if upstream is None:
             raise ValueError(
                 f"ERROR [write_prd]: no approved Brief found for slug '{slug}'. "
                 f"Run /brainstorm {slug} and approve the Brief first."
             )
+
         references = [str(upstream.relative_to(artifacts_dir.parent))]
         prd_id = f"prd-{uuid.uuid4()}"
         version = 1
@@ -249,6 +302,14 @@ def handle_write_prd(tool_input: dict, existing_prd: dict | None = None) -> dict
         prior_log = existing_prd.get("decision_log", [])
         source_idea = existing_prd["source_idea"]
         references = existing_prd.get("references", [])
+        # Lock archetype fields on v2+: engine overwrites whatever the agent provided.
+        # Keys absent from v1 are evicted — agents cannot add them on refinement turns.
+        locked_content = existing_prd.get("content", {})
+        for key in _ARCHETYPE_LOCKED_KEYS:
+            if key in locked_content:
+                tool_input[key] = locked_content[key]
+            else:
+                tool_input.pop(key, None)
 
     folder = artifacts_dir / slug / "prd"
     folder.mkdir(parents=True, exist_ok=True)

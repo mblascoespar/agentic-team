@@ -12,7 +12,9 @@
     "scope_out",
     "features",
     "assumptions",
-    "open_questions"
+    "open_questions",
+    "primary_archetype",
+    "archetype_reasoning"
   ],
   "properties": {
     "slug": {
@@ -140,6 +142,26 @@
         "type": "string"
       },
       "description": "Must be a JSON array, never a string. Use [] for empty."
+    },
+    "primary_archetype": {
+      "type": "string",
+      "enum": ["domain_system", "data_pipeline", "system_integration", "process_system"],
+      "description": "Primary classification of the system being built. Locked on v1 — cannot change on refinement turns."
+    },
+    "secondary_archetype": {
+      "type": "string",
+      "enum": ["process_system"],
+      "description": "Optional secondary archetype. Only valid when primary is system_integration. Locked on v1."
+    },
+    "archetype_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "Confidence in the archetype classification. May be revised on refinement turns."
+    },
+    "archetype_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Explanation of why this archetype was chosen. Locked on v1."
     },
     "decision_log_entry": {
       "type": "object",

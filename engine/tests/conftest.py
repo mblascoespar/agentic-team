@@ -14,6 +14,8 @@ def make_prd_input(slug="test-project", **overrides) -> dict:
         "slug": slug,
         "source_idea": "Build something useful",
         "title": "Test Project",
+        "primary_archetype": "domain_system",
+        "archetype_reasoning": "Rich business rules with complex invariants warrant a domain system classification.",
         "problem": "A specific problem for a specific user",
         "target_users": ["Backend engineer at a mid-size SaaS company"],
         "goals": ["Engineers ship faster with fewer incidents"],
@@ -235,7 +237,10 @@ def make_tech_stack_input(slug="test-project", **overrides) -> dict:
 
 
 # Slugs used in PRD handler tests (invariants, lifecycle, contracts).
-_PRD_TEST_SLUGS = ("test-project", "original-slug", "my-project", "my-app", "deploy-rollback")
+_PRD_TEST_SLUGS = (
+    "test-project", "original-slug", "my-project", "my-app", "deploy-rollback",
+    "test-pipeline", "test-integration", "test-workflow", "test-layered",
+)
 
 
 # ---------------------------------------------------------------------------
