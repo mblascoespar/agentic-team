@@ -129,6 +129,7 @@ Classify the archetype **after** the problem statement, target users, and at lea
 | `data_pipeline` | The system moves and transforms data between sources and sinks. State is transient or pass-through. Complexity is in correctness and failure handling, not in business rules. | Is the data the product, and the system just shapes it? |
 | `system_integration` | The system connects external systems you don't own. Complexity is in contracts, translation layers, and ownership boundaries — not in domain logic. | Is the primary challenge what you control vs what you don't? |
 | `process_system` | The system orchestrates actors (human or automated) through defined steps with decision points and triggers. Complexity is in the workflow structure and automation boundaries. | Is there a defined sequence of steps with roles, approvals, or triggers? |
+| `system_evolution` | An existing system is being non-trivially changed — new behavior added, existing behavior modified, or internal structure redesigned. The challenge is understanding what the current system does, what must be preserved, and in what order changes can safely happen. | Is there an existing system whose current behavior constrains what you can change and in what sequence? |
 
 **Layered case** (`system_integration + process_system`): the system integrates external constraints AND orchestrates a workflow within them. Both apply. Example: onboarding a customer into three external platforms (integration) via a defined approval sequence (process).
 
@@ -145,7 +146,7 @@ Classify the archetype **after** the problem statement, target users, and at lea
 Add these four fields to every `write_prd` call:
 
 ```
-primary_archetype:    domain_system | data_pipeline | system_integration | process_system
+primary_archetype:    domain_system | data_pipeline | system_integration | process_system | system_evolution
 secondary_archetype:  process_system | null   (only valid secondary today)
 archetype_confidence: high | medium | low
 archetype_reasoning:  one or two sentences — which signals drove the classification and why alternatives were ruled out

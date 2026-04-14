@@ -265,6 +265,7 @@ def test_prd_write_rejects_unsupported_archetype_combination(prd_artifacts_dir):
     ("test-pipeline",    "data_pipeline"),
     ("test-integration", "system_integration"),
     ("test-workflow",    "process_system"),
+    ("test-evolution",   "system_evolution"),
 ])
 def test_prd_write_accepts_valid_single_archetype(prd_artifacts_dir, slug, archetype):
     artifact = handle_write_prd(make_prd_input(slug=slug, primary_archetype=archetype))

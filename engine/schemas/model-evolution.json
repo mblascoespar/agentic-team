@@ -1,0 +1,28 @@
+{
+  "fields": {
+    "current_state": {
+      "kind": "mandatory",
+      "description": "What the system does today — key behaviors, components, and what depends on them"
+    },
+    "frozen_surface": {
+      "kind": "mandatory",
+      "description": "Contracts intentionally preserved — existing callers depend on these and they cannot break"
+    },
+    "change_surface": {
+      "kind": "mandatory",
+      "description": "Behaviors intentionally changing — current behavior, target behavior, what breaks, and why the change is necessary"
+    },
+    "migration_path": {
+      "kind": "mandatory",
+      "description": "Ordered steps with gates — what must be true before each step starts and the rollback boundary per step"
+    },
+    "regression_risk": {
+      "kind": "mandatory",
+      "description": "Where existing behavior could silently break — area, trigger, failure mode (silent vs loud), and existing guard if any"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Blocking unknowns that would change the frozen/change surface or migration order if answered"
+    }
+  }
+}

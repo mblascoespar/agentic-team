@@ -231,3 +231,7 @@ Pass: Data Flow Model captures input/output/stages. Design = pipeline topology +
 **`accounting-engine`** — `domain_system`
 Expected DAG: `brief → prd → model_domain → design → tech_stack`
 Pass: Domain Model = bounded contexts, aggregates, context map. Design = hexagonal layering. No change from current behavior.
+
+**`engine-archetype-refactor`** — `system_evolution`
+Expected DAG: `brief → prd → model_evolution → design → tech_stack`
+Pass: Evolution Model captures current routing behavior, frozen MCP tool surface, intentional behavioral deltas (topology-aware routing), ordered migration steps with gates, and silent regression risk surface.

@@ -145,7 +145,7 @@
     },
     "primary_archetype": {
       "type": "string",
-      "enum": ["domain_system", "data_pipeline", "system_integration", "process_system"],
+      "enum": ["domain_system", "data_pipeline", "system_integration", "process_system", "system_evolution"],
       "description": "Primary classification of the system being built. Locked on v1 — cannot change on refinement turns."
     },
     "secondary_archetype": {

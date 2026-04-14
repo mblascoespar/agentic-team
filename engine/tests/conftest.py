@@ -227,6 +227,14 @@ def make_model_input(slug="test-project", model_type="domain", **overrides) -> d
             "automation_boundary": "Script is automated; approval is manual",
             "open_questions": [],
         },
+        "evolution": {
+            "current_state": {"description": "Existing system", "key_behaviors": ["routes requests"], "components": []},
+            "frozen_surface": [{"name": "MCP API", "kind": "api", "description": "Tool signatures", "dependents": ["agents"]}],
+            "change_surface": [{"name": "routing", "current_behavior": "single topology", "target_behavior": "per-archetype", "breaking_for": [], "rationale": "support multiple archetypes"}],
+            "migration_path": [{"step": "Step 1", "description": "Add archetype field", "gates": [], "rollback_boundary": "revert schema"}],
+            "regression_risk": [{"area": "get_available_artifacts", "trigger": "topology change", "failure_mode": "silent", "guard": "test_contracts.py"}],
+            "open_questions": [],
+        },
     }
     base = {
         "slug": slug,
@@ -275,7 +283,7 @@ def make_tech_stack_input(slug="test-project", **overrides) -> dict:
 # Slugs used in PRD handler tests (invariants, lifecycle, contracts).
 _PRD_TEST_SLUGS = (
     "test-project", "original-slug", "my-project", "my-app", "deploy-rollback",
-    "test-pipeline", "test-integration", "test-workflow", "test-layered",
+    "test-pipeline", "test-integration", "test-workflow", "test-layered", "test-evolution",
 )
 
 

@@ -483,6 +483,12 @@ class TestTopologyResolution:
         topology = _resolve_topology("my-app")
         assert topology == ["brief", "prd", "model_workflow", "design", "tech_stack"]
 
+    def test_system_evolution_topology(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="system_evolution"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        topology = _resolve_topology("my-app")
+        assert topology == ["brief", "prd", "model_evolution", "design", "tech_stack"]
+
     def test_returns_none_without_approved_prd(self, prd_artifacts_dir):
         handle_write_prd(make_prd_input(slug="my-app"))
         # PRD exists but is draft — not approved

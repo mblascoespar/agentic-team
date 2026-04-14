@@ -34,14 +34,16 @@ _VALID_COMBINATIONS: frozenset[tuple] = frozenset({
     ("data_pipeline",),
     ("system_integration",),
     ("process_system",),
+    ("system_evolution",),
     ("system_integration", "process_system"),
 })
 
 _DAG_TOPOLOGIES: dict[tuple, list[str]] = {
-    ("domain_system",):                       ["brief", "prd", "model_domain",    "design", "tech_stack"],
-    ("data_pipeline",):                       ["brief", "prd", "model_data_flow", "design", "tech_stack"],
-    ("system_integration",):                  ["brief", "prd", "model_system",    "design", "tech_stack"],
-    ("process_system",):                      ["brief", "prd", "model_workflow",  "design", "tech_stack"],
+    ("domain_system",):                       ["brief", "prd", "model_domain",     "design", "tech_stack"],
+    ("data_pipeline",):                       ["brief", "prd", "model_data_flow",  "design", "tech_stack"],
+    ("system_integration",):                  ["brief", "prd", "model_system",     "design", "tech_stack"],
+    ("process_system",):                      ["brief", "prd", "model_workflow",   "design", "tech_stack"],
+    ("system_evolution",):                    ["brief", "prd", "model_evolution",  "design", "tech_stack"],
     ("system_integration", "process_system"): ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"],
 }
 
@@ -66,15 +68,17 @@ _BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
     "model_data_flow": "model-data-flow.json",
     "model_system":    "model-system.json",
     "model_workflow":  "model-workflow.json",
+    "model_evolution": "model-evolution.json",
 }
 
 # Maps model_type argument to the artifact stage directory.
 # Single source of truth for write_model routing and MCP server dispatch.
 _MODEL_TYPE_TO_STAGE: dict[str, str] = {
-    "domain":    "model_domain",
-    "data_flow": "model_data_flow",
-    "system":    "model_system",
-    "workflow":  "model_workflow",
+    "domain":     "model_domain",
+    "data_flow":  "model_data_flow",
+    "system":     "model_system",
+    "workflow":   "model_workflow",
+    "evolution":  "model_evolution",
 }
 
 # ---------------------------------------------------------------------------
