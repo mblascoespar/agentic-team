@@ -800,11 +800,21 @@ def handle_write_design(tool_input: dict, existing_design: dict | None = None) -
 
     if existing_design is None:
         slug = tool_input["slug"]
-        upstream = find_latest(slug, "domain", status="approved")
+        # Derive upstream model stage from topology rather than hardcoding "domain".
+        # The model stage immediately precedes "design" in every topology.
+        topology = _resolve_topology(slug)
+        if topology is None:
+            raise ValueError(
+                f"ERROR [write_design]: cannot determine topology for slug '{slug}'. "
+                f"Approve the PRD with archetype fields first."
+            )
+        design_idx = topology.index("design")
+        upstream_stage = topology[design_idx - 1]
+        upstream = find_latest(slug, upstream_stage, status="approved")
         if upstream is None:
             raise ValueError(
-                f"ERROR [write_design]: no approved Domain Model found for slug '{slug}'. "
-                f"Approve the Domain Model first, then call write_design again."
+                f"ERROR [write_design]: no approved {upstream_stage} found for slug '{slug}'. "
+                f"Approve the {upstream_stage} first, then call write_design again."
             )
         references = [str(upstream.relative_to(artifacts_dir.parent))]
         design_id = f"design-{uuid.uuid4()}"

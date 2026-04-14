@@ -539,7 +539,7 @@ class TestDesignV1:
     def test_references_contains_upstream_domain(self, design_artifacts_dir):
         a = handle_write_design(make_design_input())
         assert len(a["references"]) == 1
-        assert a["references"][0].endswith("test-project/domain/v1.json")
+        assert a["references"][0].endswith("test-project/model_domain/v1.json")
 
     def test_decision_log_empty_when_no_entry(self, design_artifacts_dir):
         assert handle_write_design(make_design_input())["decision_log"] == []

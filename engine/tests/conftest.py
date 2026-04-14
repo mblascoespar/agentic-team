@@ -325,15 +325,15 @@ def domain_artifacts_dir(prd_artifacts_dir):
 @pytest.fixture
 def design_artifacts_dir(domain_artifacts_dir):
     """
-    Like domain_artifacts_dir but with approved Domain Models pre-created for all
-    slugs used in design tests. Required because handle_write_design v1 resolves
-    the upstream domain model from slug via find_latest.
+    Like domain_artifacts_dir but with approved model_domain artifacts pre-created
+    for all slugs used in design tests. handle_write_design v1 now resolves the
+    upstream model stage from the topology (model_domain for domain_system).
     """
-    from tool_handler import handle_write_domain_model, handle_approve_domain_model
+    from tool_handler import handle_write_model, handle_approve_model
 
     for slug in ("test-project", "original-slug", "my-app", "deploy-rollback"):
-        handle_write_domain_model(make_domain_input(slug=slug))
-        handle_approve_domain_model(str(domain_artifacts_dir / slug / "domain" / "v1.json"))
+        handle_write_model(make_model_input(slug=slug, model_type="domain"))
+        handle_approve_model(str(domain_artifacts_dir / slug / "model_domain" / "v1.json"))
 
     return domain_artifacts_dir
 
