@@ -526,6 +526,7 @@ All artifacts in the system share these fields and semantics. Every new artifact
 
 | Date | Change |
 |------|--------|
+| 2026-04-14 | Step 5 (model-data-flow): `/model-data-flow` command written — Pipeline Modeler specialist, 5-question PRD scanning model (sources/stage-boundaries/data-quality/partial-state/replay-safety), failure + idempotency + ordering/volume risk challenge criteria, complexity calibration from Brief scope. |
 | 2026-04-14 | Step 5 (model-domain): `/model-domain` command written — DDD specialist, plain-language challenge loop, complexity calibration from Brief scope, `update_schema` support, refinement consistency check, decision log discipline. `domain-agent.md` retired. Product Owner updated with archetype classification: signal-to-archetype table, confidence rules, four required PRD fields locked after v1. |
 | 2026-03-27 | Tech Stack Agent implemented: `write_tech_stack` + `approve_tech_stack` MCP tools, handler with rejection_reason semantic guard, renderer, `/tech-stack-agent` slash command with full deliberation session model (agenda confirmation, sequential deliberation, re-open flow). `_UPSTREAM_STAGE` updated with `tech_stack → design`. 73 new tests (378 total). |
 | 2026-03-20 | Product Agent implemented (MCP tools, tool handler, renderer, system prompt) |

@@ -154,7 +154,7 @@ The correct model: scan approved artifacts and ask "what's next?" — one stage 
 
 #### Tasks
 - [x] Design and write `domain_system` challenge loop — `/model-domain`; `domain-agent.md` retired
-- [ ] Design and write `data_pipeline` challenge loop — `/model-data-flow`
+- [x] Design and write `data_pipeline` challenge loop — `/model-data-flow`
 - [ ] Design and write `system_integration` challenge loop — `/model-system`
 - [ ] Design and write `process_system` challenge loop — `/model-workflow`
 - [ ] Layered case session flow (two-phase, two approval gates)
