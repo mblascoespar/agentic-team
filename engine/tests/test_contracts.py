@@ -32,10 +32,11 @@ from tool_handler import (
     handle_write_brief, handle_approve_brief,
     handle_write_design, handle_approve_design,
     handle_write_tech_stack,
+    handle_write_model, handle_approve_model,
     get_available_artifacts, find_latest, read_artifact,
     _resolve_topology, _next_stage,
 )
-from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
+from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input, make_model_input
 
 pytestmark = pytest.mark.contract
 
@@ -616,3 +617,78 @@ class TestTopologyAwareGetAvailableArtifacts:
         assert "my-app" in ready_workflow
 
 
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — PRD → Model contracts
+# ---------------------------------------------------------------------------
+
+class TestContractPRDToModel:
+    """
+    Verifies that an approved PRD is correctly consumed by handle_write_model
+    and that each archetype routes to the correct stage.
+    """
+
+    @pytest.mark.parametrize("model_type,archetype,expected_stage", [
+        ("domain",    "domain_system",     "model_domain"),
+        ("data_flow", "data_pipeline",     "model_data_flow"),
+        ("system",    "system_integration","model_system"),
+        ("workflow",  "process_system",    "model_workflow"),
+    ])
+    def test_model_references_approved_prd(self, prd_artifacts_dir, model_type, archetype, expected_stage):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype=archetype))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        artifact = handle_write_model(make_model_input(slug="my-app", model_type=model_type))
+        assert artifact["references"][0].endswith("my-app/prd/v1.json")
+        assert (prd_artifacts_dir / "my-app" / expected_stage / "v1.json").exists()
+
+    @pytest.mark.parametrize("model_type,archetype", [
+        ("domain",    "domain_system"),
+        ("data_flow", "data_pipeline"),
+        ("system",    "system_integration"),
+        ("workflow",  "process_system"),
+    ])
+    def test_approved_prd_makes_slug_ready_for_correct_model_stage(self, prd_artifacts_dir, model_type, archetype):
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype=archetype))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        expected_stage = f"model_{model_type}"
+        result = get_available_artifacts(expected_stage)
+        assert any(e["slug"] == "my-app" for e in result["ready_to_start"])
+
+    def test_wrong_archetype_not_ready_for_other_model_stage(self, prd_artifacts_dir):
+        """data_pipeline slug must not appear in ready_to_start for model_domain."""
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="data_pipeline"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        result = get_available_artifacts("model_domain")
+        assert not any(e["slug"] == "my-app" for e in result["ready_to_start"])
+
+
+class TestContractLayeredModel:
+    """
+    Verifies the layered topology (system_integration + process_system):
+    model_system must be approved before model_workflow can start.
+    """
+
+    def test_layered_model_system_approval_unlocks_model_workflow(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(
+            slug="my-app",
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug="my-app", model_type="system"))
+        handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_system" / "v1.json"))
+        result = get_available_artifacts("model_workflow")
+        assert any(e["slug"] == "my-app" for e in result["ready_to_start"])
+
+    def test_layered_model_system_not_approved_blocks_model_workflow(self, prd_artifacts_dir):
+        handle_write_prd(make_prd_input(
+            slug="my-app",
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug="my-app", model_type="system"))
+        # model_system is draft — model_workflow must not be ready
+        result = get_available_artifacts("model_workflow")
+        assert not any(e["slug"] == "my-app" for e in result["ready_to_start"])

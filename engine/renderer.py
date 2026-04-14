@@ -1,3 +1,52 @@
+import json as _json
+
+
+def render_model(artifact: dict) -> str:
+    """Render any model artifact (domain, data_flow, system, workflow).
+
+    Content fields are rendered generically — mandatory fields from the instance
+    schema are labeled [mandatory]; optional fields are unlabeled.
+    The schema is not loaded here; callers may pass it via the schema kwarg for
+    field-kind annotations (used by the model agent session display).
+    """
+    model_type = artifact.get("model_type", "unknown")
+    stage = f"model_{model_type.replace('data_flow', 'data_flow')}"
+    c = artifact.get("content", {})
+    lines = [
+        f"Model ({model_type}): {artifact['slug']}  "
+        f"(v{artifact['version']} · {artifact['status']})",
+        f"Path: artifacts/{artifact['slug']}/{stage}/v{artifact['version']}.json",
+        "",
+    ]
+
+    for field, value in c.items():
+        lines.append(f"── {field.replace('_', ' ').upper()}")
+        if isinstance(value, list):
+            for item in value:
+                lines.append(
+                    f"  • {item}" if isinstance(item, str)
+                    else f"  • {_json.dumps(item, ensure_ascii=False)}"
+                )
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                lines.append(f"  {k}: {v}")
+        else:
+            lines.append(f"  {value}")
+        lines.append("")
+
+    if artifact.get("decision_log"):
+        lines += ["DECISION LOG"]
+        for entry in artifact["decision_log"]:
+            lines += [
+                f"  v{entry['version']} · {entry['timestamp'][:10]} · "
+                f"{entry['author']} · {entry['trigger']}",
+                f"    {entry['summary']}",
+            ]
+        lines += [""]
+
+    return "\n".join(lines)
+
+
 def render_tech_stack(artifact: dict) -> str:
     c = artifact["content"]
     lines = [

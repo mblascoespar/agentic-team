@@ -68,6 +68,15 @@ _BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
     "model_workflow":  "model-workflow.json",
 }
 
+# Maps model_type argument to the artifact stage directory.
+# Single source of truth for write_model routing and MCP server dispatch.
+_MODEL_TYPE_TO_STAGE: dict[str, str] = {
+    "domain":    "model_domain",
+    "data_flow": "model_data_flow",
+    "system":    "model_system",
+    "workflow":  "model_workflow",
+}
+
 # ---------------------------------------------------------------------------
 # Artifact directory resolution — CWD-relative for portability
 #
@@ -387,6 +396,139 @@ def _validate_archetype_combination(primary: str, secondary: str | None) -> None
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
+
+def handle_write_model(tool_input: dict, existing_model: dict | None = None) -> dict:
+    """Write or update a model artifact for any archetype.
+
+    Routes to the correct stage directory based on model_type. Validates that
+    model_type is present in the topology for the slug's approved PRD. On v1,
+    derives the upstream reference from the topology (prd, or model_system for
+    the layered workflow case). Creates instance schema on first write.
+    """
+    tool_input = dict(tool_input)  # defensive copy — handler pops decision_log_entry
+    slug = tool_input.get("slug", "")
+    _validate_slug_format(slug, "write_model")
+
+    model_type = tool_input.get("model_type", "")
+    stage = _MODEL_TYPE_TO_STAGE.get(model_type)
+    if stage is None:
+        raise ValueError(
+            f"ERROR [write_model]: unsupported model_type '{model_type}'. "
+            f"Valid types: {', '.join(sorted(_MODEL_TYPE_TO_STAGE))}."
+        )
+
+    topology = _resolve_topology(slug)
+    if topology is None:
+        raise ValueError(
+            f"ERROR [write_model]: cannot determine topology for slug '{slug}'. "
+            f"Approve the PRD first."
+        )
+    if stage not in topology:
+        raise ValueError(
+            f"ERROR [write_model]: model_type '{model_type}' (stage '{stage}') is not in "
+            f"the topology for slug '{slug}'. Check the PRD archetype."
+        )
+
+    artifacts_dir = _get_artifacts_dir()
+    now = datetime.now(timezone.utc).isoformat()
+    log_entry_input = tool_input.pop("decision_log_entry", None)
+    content = tool_input.get("content", {})
+
+    if existing_model is None:
+        idx = topology.index(stage)
+        upstream_stage = topology[idx - 1]
+        upstream = find_latest(slug, upstream_stage, status="approved")
+        if upstream is None:
+            raise ValueError(
+                f"ERROR [write_model]: no approved {upstream_stage} found for slug '{slug}'. "
+                f"Approve the {upstream_stage} first."
+            )
+        references = [str(upstream.relative_to(artifacts_dir.parent))]
+        model_id = f"model-{model_type}-{uuid.uuid4()}"
+        version = 1
+        parent_version = None
+        created_at = now
+        prior_log = []
+    else:
+        slug = existing_model["slug"]
+        model_id = existing_model["id"]
+        version = existing_model["version"] + 1
+        parent_version = existing_model["version"]
+        created_at = existing_model["created_at"]
+        prior_log = existing_model.get("decision_log", [])
+        references = existing_model.get("references", [])
+
+    folder = artifacts_dir / slug / stage
+    folder.mkdir(parents=True, exist_ok=True)
+    _ensure_instance_schema(slug, stage)
+
+    if log_entry_input:
+        decision_log = prior_log + [{
+            "version": version,
+            "timestamp": now,
+            "author": f"agent:model-agent-{model_type}",
+            "trigger": log_entry_input.get("trigger", "human_feedback"),
+            "summary": log_entry_input.get("summary", ""),
+            "changed_fields": log_entry_input.get("changed_fields", []),
+        }]
+    else:
+        decision_log = prior_log
+
+    artifact = {
+        "id": model_id,
+        "slug": slug,
+        "model_type": model_type,
+        "version": version,
+        "parent_version": parent_version,
+        "created_at": created_at,
+        "updated_at": now,
+        "status": "draft",
+        "references": references,
+        "decision_log": decision_log,
+        "content": content,
+    }
+
+    path = folder / f"v{version}.json"
+    path.write_text(json.dumps(artifact, indent=2))
+    return artifact
+
+
+def handle_approve_model(artifact_path: str) -> dict:
+    """Approve a model artifact after validating all mandatory schema fields are present."""
+    path = _validate_approve_path(artifact_path, "approve_model")
+    artifact = json.loads(path.read_text())
+
+    model_type = artifact.get("model_type", "")
+    stage = _MODEL_TYPE_TO_STAGE.get(model_type)
+    if stage:
+        schema_path = path.parent / "schema.json"
+        if schema_path.exists():
+            schema = json.loads(schema_path.read_text())
+            mandatory = [
+                name for name, field in schema.get("fields", {}).items()
+                if field.get("kind") == "mandatory"
+            ]
+            missing = [f for f in mandatory if f not in artifact.get("content", {})]
+            if missing:
+                raise ValueError(
+                    f"ERROR [approve_model]: cannot approve — missing mandatory fields: "
+                    f"{', '.join(missing)}. Add these fields before approving."
+                )
+
+    now = datetime.now(timezone.utc).isoformat()
+    artifact["status"] = "approved"
+    artifact["updated_at"] = now
+    artifact.setdefault("decision_log", []).append({
+        "version": artifact["version"],
+        "timestamp": now,
+        "author": "human",
+        "trigger": "approval",
+        "summary": f"Model ({model_type}) approved.",
+        "changed_fields": ["status"],
+    })
+    path.write_text(json.dumps(artifact, indent=2))
+    return artifact
+
 
 def handle_write_prd(tool_input: dict, existing_prd: dict | None = None) -> dict:
     _validate_schema(tool_input, _PRD_INPUT_SCHEMA, "write_prd")

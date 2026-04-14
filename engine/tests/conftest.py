@@ -201,6 +201,42 @@ def _create_approved_brief(slug: str, artifacts_dir: Path) -> None:
     handle_approve_brief(str(artifacts_dir / slug / "brief" / "v1.json"))
 
 
+def make_model_input(slug="test-project", model_type="domain", **overrides) -> dict:
+    """Minimal valid write_model input for any model type."""
+    content_by_type = {
+        "domain": {
+            "bounded_contexts": [{"name": "Core", "responsibility": "Owns core logic"}],
+            "context_map": [],
+            "open_questions": [],
+        },
+        "data_flow": {
+            "sources": [{"name": "Input", "schema": "raw events"}],
+            "stages": [{"name": "Transform", "transformation": "normalize"}],
+            "sinks": [{"name": "Output", "schema": "normalized events"}],
+            "open_questions": [],
+        },
+        "system": {
+            "systems": [{"name": "ExtAPI", "owned": False}],
+            "integrations": [{"from": "us", "to": "ExtAPI", "protocol": "REST"}],
+            "constraints": ["Rate limit: 100 req/s"],
+            "open_questions": [],
+        },
+        "workflow": {
+            "actors": [{"name": "Operator", "role": "human"}],
+            "steps": [{"name": "Install", "trigger": "manual", "action": "run script"}],
+            "automation_boundary": "Script is automated; approval is manual",
+            "open_questions": [],
+        },
+    }
+    base = {
+        "slug": slug,
+        "model_type": model_type,
+        "content": content_by_type.get(model_type, {}),
+    }
+    base.update(overrides)
+    return base
+
+
 def make_tech_stack_input(slug="test-project", **overrides) -> dict:
     """Engine resolves the upstream design artifact from slug — no design_path needed."""
     base = {
@@ -300,6 +336,23 @@ def design_artifacts_dir(domain_artifacts_dir):
         handle_approve_domain_model(str(domain_artifacts_dir / slug / "domain" / "v1.json"))
 
     return domain_artifacts_dir
+
+
+@pytest.fixture
+def model_artifacts_dir(prd_artifacts_dir):
+    """
+    Like prd_artifacts_dir but with approved PRDs (domain_system) and approved
+    domain model artifacts pre-created. Used for model → design contract tests.
+    """
+    from tool_handler import handle_write_model, handle_approve_model
+
+    for slug in ("test-project", "my-app", "deploy-rollback"):
+        handle_write_prd(make_prd_input(slug=slug, primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / slug / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug=slug, model_type="domain"))
+        handle_approve_model(str(prd_artifacts_dir / slug / "model_domain" / "v1.json"))
+
+    return prd_artifacts_dir
 
 
 @pytest.fixture
