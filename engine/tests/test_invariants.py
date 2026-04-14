@@ -726,7 +726,7 @@ def test_design_status_always_draft_on_v2(design_artifacts_dir):
 def test_design_references_set_by_engine_on_v1(design_artifacts_dir):
     v1 = handle_write_design(make_design_input())
     assert len(v1["references"]) == 1
-    assert v1["references"][0].endswith("test-project/domain/v1.json")
+    assert v1["references"][0].endswith("test-project/model_domain/v1.json")
 
 
 def test_design_references_locked_after_v1(design_artifacts_dir):
@@ -844,10 +844,11 @@ def test_design_write_rejects_nfr_source_not_human_provided(design_artifacts_dir
         handle_write_design(inp)
 
 
-def test_design_v1_fails_without_approved_domain_model(domain_artifacts_dir):
-    """Engine gate: write_design v1 raises ValueError when no approved domain model exists."""
-    with pytest.raises(ValueError, match="no approved Domain Model"):
-        handle_write_design(make_design_input(slug="no-domain-here"))
+def test_design_v1_fails_without_approved_model(domain_artifacts_dir):
+    """Engine gate: write_design v1 raises ValueError when no approved model artifact exists."""
+    # "original-slug" has an approved PRD (domain_system archetype) but no model_domain artifact
+    with pytest.raises(ValueError, match="no approved model_domain"):
+        handle_write_design(make_design_input(slug="original-slug"))
 
 
 # ---------------------------------------------------------------------------

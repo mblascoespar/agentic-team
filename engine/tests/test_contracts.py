@@ -343,24 +343,24 @@ class TestContractDomainModelToDesign:
     the upstream reference.
     """
 
-    def test_design_references_field_points_to_approved_domain(self, design_artifacts_dir):
+    def test_design_references_field_points_to_approved_model(self, design_artifacts_dir):
         design = handle_write_design(make_design_input(slug="my-app"))
         assert len(design["references"]) == 1
-        assert design["references"][0].endswith("my-app/domain/v1.json")
+        assert design["references"][0].endswith("my-app/model_domain/v1.json")
 
-    def test_design_slug_matches_domain_slug(self, design_artifacts_dir):
+    def test_design_slug_matches_model_slug(self, design_artifacts_dir):
         design = handle_write_design(make_design_input(slug="my-app"))
         assert design["slug"] == "my-app"
 
-    def test_design_id_is_independent_from_domain_id(self, design_artifacts_dir):
-        domain = read_artifact("my-app", "domain")["artifact"]
+    def test_design_id_is_independent_from_model_id(self, design_artifacts_dir):
+        model = read_artifact("my-app", "model_domain")["artifact"]
         design = handle_write_design(make_design_input(slug="my-app"))
-        assert design["id"] != domain["id"]
+        assert design["id"] != model["id"]
         assert design["id"].startswith("design-")
 
-    def test_design_written_to_separate_subfolder_from_domain(self, design_artifacts_dir):
+    def test_design_written_to_separate_subfolder_from_model(self, design_artifacts_dir):
         handle_write_design(make_design_input(slug="my-app"))
-        assert (design_artifacts_dir / "my-app" / "domain" / "v1.json").exists()
+        assert (design_artifacts_dir / "my-app" / "model_domain" / "v1.json").exists()
         assert (design_artifacts_dir / "my-app" / "design" / "v1.json").exists()
 
 
@@ -419,23 +419,23 @@ class TestContractDesignToTechStackHandoffGuards:
 
 class TestContractDomainModelToDesignHandoffGuards:
     """
-    Verifies that the engine enforces the Domain Model → Design handoff contract:
-    the design cannot be created when no approved Domain Model exists for the slug.
+    Verifies that the engine enforces the Model → Design handoff contract:
+    the design cannot be created when no approved model artifact exists for the slug.
     """
 
-    def test_design_requires_approved_domain_model(self, prd_artifacts_dir):
-        """Draft domain model (unapproved) is not sufficient to start design."""
-        handle_write_prd(make_prd_input(slug="deploy-rollback"))
+    def test_design_requires_approved_model(self, prd_artifacts_dir):
+        """Draft model (unapproved) is not sufficient to start design."""
+        handle_write_prd(make_prd_input(slug="deploy-rollback", primary_archetype="domain_system"))
         handle_approve_prd(str(prd_artifacts_dir / "deploy-rollback" / "prd" / "v1.json"))
-        handle_write_domain_model(make_domain_input(slug="deploy-rollback"))
-        # domain is draft, not approved — must fail
-        with pytest.raises(ValueError, match="no approved Domain Model"):
+        handle_write_model(make_model_input(slug="deploy-rollback", model_type="domain"))
+        # model_domain is draft, not approved — must fail
+        with pytest.raises(ValueError, match="no approved model_domain"):
             handle_write_design(make_design_input(slug="deploy-rollback"))
 
-    def test_design_requires_existing_domain_model(self, prd_artifacts_dir):
-        """No domain model at all raises ValueError."""
-        with pytest.raises(ValueError, match="no approved Domain Model"):
-            handle_write_design(make_design_input(slug="no-domain-here"))
+    def test_design_requires_approved_prd_for_topology(self, prd_artifacts_dir):
+        """No approved PRD means topology is undetermined — must fail."""
+        with pytest.raises(ValueError, match="cannot determine topology"):
+            handle_write_design(make_design_input(slug="no-prd-here"))
 
 
 # ---------------------------------------------------------------------------
