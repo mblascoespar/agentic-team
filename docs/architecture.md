@@ -690,13 +690,13 @@ To change anything: go upstream, re-draft, approve, then regenerate all downstre
 
 | Tool | Change |
 |------|--------|
-| `write_model(slug, model_type, content, decision_log_entry)` | New. Routes to correct stage dir; validates model_type vs PRD archetype. |
-| `approve_model(artifact_path)` | New. Validates mandatory fields against instance schema before approving. |
-| `update_schema(slug, stage, field_name, kind, description)` | New. Adds field to instance schema. Rejects conflicts. Auto-logs decision. |
-| `read_artifact` | Now returns `{artifact, schema}` wrapper. |
-| `write_prd` | Validates archetype combination on v1. Locks archetype fields on v2+. |
-| `get_available_artifacts` | Topology-aware via `_next_stage`. Forward-looking: ready_to_start iff `_next_stage(slug) == stage`. |
-| `write_domain_model`, `approve_domain_model` | Removed from MCP server. Replaced by `write_model` / `approve_model`. |
+| `write_model(slug, model_type, content, decision_log_entry)` | Step 4. Routes to correct stage dir via `_MODEL_TYPE_TO_STAGE`; upstream derived from topology. |
+| `approve_model(artifact_path)` | Step 4. Validates mandatory fields against instance schema before approving. |
+| `update_schema(slug, stage, field_name, kind, description)` | Step 3. Adds field to instance schema. Rejects conflicts. Auto-logs decision. |
+| `read_artifact` | Step 3. Now returns `{artifact, schema}` wrapper. |
+| `write_prd` | Step 1. Validates archetype combination on v1. Locks archetype fields on v2+. |
+| `get_available_artifacts` | Step 2. Topology-aware via `_next_stage`. Forward-looking: ready_to_start iff `_next_stage(slug) == stage`. |
+| `write_domain_model`, `approve_domain_model` | Removed from MCP server (Step 4). Handlers kept for migration. |
 
 ---
 
@@ -749,6 +749,8 @@ Base schemas live in `engine/schemas/`. Instance schemas live in `artifacts/<slu
 | 2026-03-23 | Brainstormer Agent implemented: `write_brief` + `approve_brief` MCP tools, tool handler, renderer, `/brainstorm` slash command with 9-phase session model and hard gate before `write_brief`. Brief is now the mandatory upstream input for the Product Agent (strict DAG gate — approved Brief required). `acceptance_criteria` added as required field per PRD feature. 196 tests total. |
 | 2026-03-25 | `read_artifact(slug, stage, version?)` MCP tool added — returns full artifact JSON by slug + stage + optional version (defaults to latest). Enables agent prompts to be scoped to MCP tools only for all artifact access; direct Claude Code file reads against artifacts are no longer needed or permitted. 9 new tests in `TestReadArtifact` (test_contracts.py). Architecture doc updated: MCP tools tables for all three agents, agent tool scope decision added. |
 | 2026-03-25 | Architecture Agent implemented: `write_design` + `approve_design` MCP tools, tool handler with semantic guards (acl_needed + cqrs_applied), renderer, `/architecture-agent` slash command with derivation rules table, auto-derived decisions, cascade refinement sequence, and all four test suites updated (invariant/lifecycle/contract/renderer). Option A (rules in prompt) adopted; Option C (hybrid engine derivation) planned as future pipeline project. |
+| 2026-04-14 | Step 4 complete: `handle_write_model` + `handle_approve_model`. Routes by `_MODEL_TYPE_TO_STAGE`; upstream derived from topology. `approve_model` validates mandatory instance schema fields. `write_model` + `approve_model` in MCP server; `write_domain_model`/`approve_domain_model` removed from tool list. `render_model` added. 450 tests. |
+| 2026-04-13 | Step 3 complete: instance schema system. Base schemas for 4 model stages. `_ensure_instance_schema` called on first write. `handle_update_schema` adds fields with decision_log. `read_artifact` returns `{artifact, schema}` wrapper. `update_schema` in MCP server. 421 tests. |
 | 2026-04-13 | Step 2 complete: `_DAG_TOPOLOGIES` replaces `_UPSTREAM_STAGE`. `_resolve_topology(slug)` reads PRD archetype and returns the correct topology list. `get_available_artifacts` rewritten as forward-looking via `_next_stage(slug)` — emits slug as ready_to_start iff `_next_stage(slug) == stage`. Removed `_ENTRY_STAGES`, `_universal_upstream`, `_get_upstream_stage`, `upstream_changed`. 412 tests. |
 | 2026-04-12 | Step 1 complete: `primary_archetype`, `secondary_archetype`, `archetype_confidence`, `archetype_reasoning` added to PRD schema. `_VALID_COMBINATIONS` engine-enforced on `write_prd` v1. Archetype fields locked after v1 (carried forward, agent cannot override). Product Owner system prompt updated with classification challenge criteria. |
 | 2026-03-25 | DAG topology made engine-private: `find_latest(slug, stage, status)` added to `tool_handler.py`. `brief_path` removed from `write_prd` schema; `prd_path` removed from `write_domain_model` schema — engine resolves upstream artifacts from slug automatically. `references` field now correctly populated on PRD v1 (was always `[]`). `get_available_artifacts(stage)` MCP tool added — returns in_progress/approved/ready_to_start buckets. |

@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from renderer import render_prd, render_domain_model, render_brief, render_design, render_tech_stack
+from renderer import render_prd, render_domain_model, render_brief, render_design, render_tech_stack, render_model
 
 pytestmark = pytest.mark.renderer
 
@@ -754,3 +754,32 @@ class TestRenderTechStack:
         out = render_tech_stack(make_tech_stack_artifact())
         assert "All five ADRs resolved via structured deliberation" in out
         assert "agent:tech-stack-agent" in out
+
+
+class TestRenderModel:
+    pytestmark = pytest.mark.renderer
+
+    def _make_artifact(self, model_type="domain"):
+        return {
+            "id": f"model-{model_type}-abc",
+            "slug": "my-app",
+            "model_type": model_type,
+            "version": 1,
+            "status": "draft",
+            "references": [],
+            "decision_log": [],
+            "content": {
+                "bounded_contexts": [{"name": "Core"}],
+                "context_map": [],
+            },
+        }
+
+    def test_header_contains_slug_version_status(self):
+        out = render_model(self._make_artifact())
+        assert "my-app" in out
+        assert "v1" in out
+        assert "draft" in out
+
+    def test_content_fields_appear_in_output(self):
+        out = render_model(self._make_artifact())
+        assert "bounded_contexts" in out.lower() or "BOUNDED CONTEXTS" in out

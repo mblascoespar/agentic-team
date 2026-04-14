@@ -22,8 +22,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tool_handler import handle_write_prd, handle_write_domain_model, handle_write_brief, handle_write_design, handle_write_tech_stack, handle_update_schema, _ensure_instance_schema
-from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
+from tool_handler import (
+    handle_write_prd, handle_approve_prd,
+    handle_write_domain_model, handle_write_brief, handle_write_design, handle_write_tech_stack,
+    handle_write_model, handle_approve_model,
+    handle_update_schema, _ensure_instance_schema,
+)
+from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input, make_model_input
 
 pytestmark = pytest.mark.invariant
 
@@ -1059,3 +1064,38 @@ def test_update_schema_rejects_missing_schema_file(artifacts_dir):
     """Stage that has never been written has no schema.json — must raise."""
     with pytest.raises(ValueError, match="no schema found"):
         handle_update_schema("my-app", "model_domain", "new_field", "optional", "Some field")
+
+# ---------------------------------------------------------------------------
+# write_model / approve_model — input validation
+# ---------------------------------------------------------------------------
+
+def test_write_model_rejects_unsupported_model_type(prd_artifacts_dir):
+    handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+    handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+    with pytest.raises(ValueError, match="unsupported model_type"):
+        handle_write_model({"slug": "my-app", "model_type": "invalid", "content": {}})
+
+
+def test_write_model_rejects_type_not_in_topology(prd_artifacts_dir):
+    """data_pipeline slug cannot write a domain model."""
+    handle_write_prd(make_prd_input(slug="my-app", primary_archetype="data_pipeline"))
+    handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+    with pytest.raises(ValueError, match="not in the topology"):
+        handle_write_model({"slug": "my-app", "model_type": "domain", "content": {}})
+
+
+def test_write_model_requires_approved_prd(prd_artifacts_dir):
+    handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+    # PRD is draft — topology undetermined
+    with pytest.raises(ValueError, match="cannot determine topology"):
+        handle_write_model({"slug": "my-app", "model_type": "domain", "content": {}})
+
+
+def test_approve_model_rejects_missing_mandatory_fields(prd_artifacts_dir):
+    handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+    handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+    # Write model with empty content — mandatory fields will be missing
+    handle_write_model({"slug": "my-app", "model_type": "domain", "content": {}})
+    artifact_path = str(prd_artifacts_dir / "my-app" / "model_domain" / "v1.json")
+    with pytest.raises(ValueError, match="missing mandatory fields"):
+        handle_approve_model(artifact_path)

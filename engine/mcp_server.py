@@ -16,10 +16,12 @@ from tool_handler import (
     handle_write_brief, handle_approve_brief,
     handle_write_design, handle_approve_design,
     handle_write_tech_stack, handle_approve_tech_stack,
+    handle_write_model, handle_approve_model,
     handle_update_schema,
     get_available_artifacts, read_artifact,
+    _MODEL_TYPE_TO_STAGE,
 )
-from renderer import render_prd, render_domain_model, render_brief, render_design, render_tech_stack
+from renderer import render_prd, render_domain_model, render_brief, render_design, render_tech_stack, render_model
 
 app = Server("agentic-team")
 
@@ -100,20 +102,47 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="write_domain_model",
-            description="Write or update a structured Domain Model artifact to disk. Call this when the user signals readiness to draft or refine.",
-            inputSchema=_WRITE_DOMAIN_MODEL_INPUT_SCHEMA,
+            name="write_model",
+            description=(
+                "Write or update a model artifact for any archetype. "
+                "Routes to the correct stage directory based on model_type. "
+                "The engine validates model_type against the PRD archetype and resolves the upstream reference from the topology."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["slug", "model_type", "content"],
+                "properties": {
+                    "slug": {"type": "string"},
+                    "model_type": {
+                        "type": "string",
+                        "enum": ["domain", "data_flow", "system", "workflow"],
+                        "description": "Must match the PRD archetype for this slug.",
+                    },
+                    "content": {
+                        "type": "object",
+                        "description": "Model content. Fields are validated against the instance schema at approval time.",
+                    },
+                    "decision_log_entry": {
+                        "type": "object",
+                        "properties": {
+                            "trigger": {"type": "string"},
+                            "summary": {"type": "string"},
+                            "changed_fields": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
+            },
         ),
         Tool(
-            name="approve_domain_model",
-            description="Mark a Domain Model artifact as approved. Advances the DAG to the Architecture Agent.",
+            name="approve_model",
+            description="Approve a model artifact after validating all mandatory schema fields are present.",
             inputSchema={
                 "type": "object",
                 "required": ["artifact_path"],
                 "properties": {
                     "artifact_path": {
                         "type": "string",
-                        "description": "Relative path to the domain model JSON file. Example: artifacts/deploy-rollback/domain/v1.json",
+                        "description": "Relative path to the model JSON file. Example: artifacts/my-app/model_domain/v1.json",
                     }
                 },
             },
@@ -240,23 +269,23 @@ async def _dispatch(name: str, arguments: dict) -> list[TextContent]:
         artifact = handle_approve_prd(arguments["artifact_path"])
         return [TextContent(type="text", text=f"PRD approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
 
-    if name == "write_domain_model":
+    if name == "write_model":
         slug = arguments.get("slug", "unknown")
-        existing_path = Path("artifacts") / slug / "domain"
-        existing_domain = None
+        model_type = arguments.get("model_type", "")
+        stage = _MODEL_TYPE_TO_STAGE.get(model_type)
+        existing_model = None
+        if stage:
+            existing_path = Path("artifacts") / slug / stage
+            if existing_path.exists():
+                versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
+                if versions:
+                    existing_model = json.loads(versions[-1].read_text())
+        artifact = handle_write_model(dict(arguments), existing_model)
+        return [TextContent(type="text", text=render_model(artifact))]
 
-        if existing_path.exists():
-            versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
-            if versions:
-                existing_domain = json.loads(versions[-1].read_text())
-
-        artifact = handle_write_domain_model(arguments, existing_domain)
-        rendered = render_domain_model(artifact)
-        return [TextContent(type="text", text=rendered)]
-
-    if name == "approve_domain_model":
-        artifact = handle_approve_domain_model(arguments["artifact_path"])
-        return [TextContent(type="text", text=f"Domain model approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
+    if name == "approve_model":
+        artifact = handle_approve_model(arguments["artifact_path"])
+        return [TextContent(type="text", text=f"Model approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
 
     if name == "write_design":
         slug = arguments.get("slug", "unknown")

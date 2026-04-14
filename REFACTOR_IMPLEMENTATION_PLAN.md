@@ -117,31 +117,20 @@ The correct model: scan approved artifacts and ask "what's next?" — one stage 
 
 ---
 
-### Step 4 — Model Agent: `write_model` + `approve_model` `TODO`
+### Step 4 — Model Agent: `write_model` + `approve_model` `DONE`
 
-**Milestone:** Agents can write and approve model artifacts for any archetype. The full `brief → prd → model → design → tech_stack` pipeline is operational for all four archetypes for the first time. The layered case (`system_integration + process_system`) is also supported — two sequential model stages, each with its own approval gate.
+**Milestone:** Agents can write and approve model artifacts for any archetype. The layered case (`system_integration + process_system`) is supported — two sequential model stages, each with its own approval gate.
 
-**Why here:** Depends on Steps 1+2 (archetype read + topology resolution) and Step 3 (instance schema for mandatory validation at approval). This is the core deliverable of the refactor.
+**Why here:** Depends on Steps 1+2 (archetype read + topology resolution) and Step 3 (instance schema for mandatory validation at approval).
 
 **Gates:** Steps 5, 6
 
 #### Tasks
-- [ ] Implement `handle_write_model(slug, model_type, content, decision_log_entry)`
-  - Validates `model_type` matches archetype in approved PRD for slug (hard error if mismatch)
-  - Routes to correct stage directory (`model_domain/`, `model_data_flow/`, `model_system/`, `model_workflow/`)
-  - Standard versioning (v1, v2, ...) and references chain
-- [ ] Implement `handle_approve_model(artifact_path)`
-  - Validates all mandatory fields in instance schema are present in content before approving
-  - Lists missing fields on rejection (does not approve partially)
-- [ ] Expose `write_model`, `approve_model` in `mcp_server.py`
-- [ ] Remove `write_domain_model`, `approve_domain_model` from MCP server (keep handlers for migration path)
-- [ ] Create renderers for each model type (domain, data_flow, system, workflow)
-- [ ] Archive existing `domain/` artifacts: move to `artifacts/<slug>/domain/_archived/` (do not delete)
-- [ ] Tests: full invariant/lifecycle/contract/renderer suite for each model type
-  - Invariant: model_type mismatch rejected, unsupported model_type rejected
-  - Lifecycle: `TestModelDomainV1/V2/Approve`, `TestModelDataFlowV1/V2/Approve`, `TestModelSystemV1/Approve`, `TestModelWorkflowV1/Approve`
-  - Contract: `TestPRDToModelDomain`, `TestPRDToModelDataFlow`, `TestPRDToModelSystem`, `TestModelSystemToModelWorkflow` (layered), `TestModelToDesign`
-  - Renderer: all mandatory + optional fields appear; mandatory vs optional labeled distinctly
+- [x] `handle_write_model` — validates model_type via topology (not archetype string comparison), derives upstream from `topology[idx-1]`, creates instance schema on first write
+- [x] `handle_approve_model` — validates mandatory instance schema fields; lists missing on rejection
+- [x] `write_model`, `approve_model` exposed in MCP server; `write_domain_model`, `approve_domain_model` removed from tool list (handlers kept for migration)
+- [x] `render_model` — generic renderer for all model types
+- [x] Tests: invariants (unsupported type, topology mismatch, mandatory field rejection), lifecycle (all 4 types + layered reference chain), contracts (PRD→model per archetype, layered gate), renderer
 
 ---
 

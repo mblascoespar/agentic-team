@@ -29,7 +29,7 @@ from tool_handler import (
     handle_update_schema,
     _ensure_instance_schema,
 )
-from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input
+from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input, make_model_input
 
 pytestmark = pytest.mark.lifecycle
 
@@ -920,3 +920,96 @@ class TestInstanceSchema:
         assert len(schema["decision_log"]) == 1
         assert schema["decision_log"][0]["trigger"] == "schema_field_added"
         assert schema["decision_log"][0]["field_name"] == "risk_drivers"
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — Model artifact lifecycle
+# ---------------------------------------------------------------------------
+
+import pytest
+
+class TestModelV1:
+    """v1 write for all four model types."""
+
+    pytestmark = pytest.mark.lifecycle
+
+    @pytest.mark.parametrize("model_type,archetype", [
+        ("domain",    "domain_system"),
+        ("data_flow", "data_pipeline"),
+        ("system",    "system_integration"),
+        ("workflow",  "process_system"),
+    ])
+    def test_v1_creates_artifact_file(self, prd_artifacts_dir, model_type, archetype):
+        from tool_handler import handle_write_model
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype=archetype))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        artifact = handle_write_model(make_model_input(slug="my-app", model_type=model_type))
+        stage = f"model_{model_type}"
+        assert (prd_artifacts_dir / "my-app" / stage / "v1.json").exists()
+        assert artifact["version"] == 1
+        assert artifact["model_type"] == model_type
+        assert artifact["status"] == "draft"
+
+    @pytest.mark.parametrize("model_type,archetype", [
+        ("domain",    "domain_system"),
+        ("data_flow", "data_pipeline"),
+        ("system",    "system_integration"),
+        ("workflow",  "process_system"),
+    ])
+    def test_v1_creates_schema_file(self, prd_artifacts_dir, model_type, archetype):
+        from tool_handler import handle_write_model
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype=archetype))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug="my-app", model_type=model_type))
+        stage = f"model_{model_type}"
+        schema_path = prd_artifacts_dir / "my-app" / stage / "schema.json"
+        assert schema_path.exists()
+        schema = json.loads(schema_path.read_text())
+        assert "fields" in schema
+
+    def test_v1_references_approved_prd(self, prd_artifacts_dir):
+        from tool_handler import handle_write_model
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        artifact = handle_write_model(make_model_input(slug="my-app", model_type="domain"))
+        assert len(artifact["references"]) == 1
+        assert "prd" in artifact["references"][0]
+
+    def test_layered_workflow_references_approved_model_system(self, prd_artifacts_dir):
+        """In layered topology, model_workflow v1 references model_system, not prd."""
+        from tool_handler import handle_write_model, handle_approve_model
+        handle_write_prd(make_prd_input(
+            slug="my-app",
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug="my-app", model_type="system"))
+        handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_system" / "v1.json"))
+        artifact = handle_write_model(make_model_input(slug="my-app", model_type="workflow"))
+        assert len(artifact["references"]) == 1
+        assert "model_system" in artifact["references"][0]
+
+
+class TestApproveModel:
+    """Approval gate: mandatory field validation."""
+
+    pytestmark = pytest.mark.lifecycle
+
+    def test_approve_succeeds_with_all_mandatory_fields(self, prd_artifacts_dir):
+        from tool_handler import handle_write_model, handle_approve_model
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug="my-app", model_type="domain"))
+        artifact = handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_domain" / "v1.json"))
+        assert artifact["status"] == "approved"
+
+    def test_approve_adds_decision_log_entry(self, prd_artifacts_dir):
+        from tool_handler import handle_write_model, handle_approve_model
+        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
+        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
+        handle_write_model(make_model_input(slug="my-app", model_type="domain"))
+        artifact = handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_domain" / "v1.json"))
+        approval_entry = artifact["decision_log"][-1]
+        assert approval_entry["trigger"] == "approval"
+        assert approval_entry["author"] == "human"
