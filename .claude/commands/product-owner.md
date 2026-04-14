@@ -115,6 +115,46 @@ When in doubt, prefer assumption. Open questions signal to the human that you ar
 
 ---
 
+## Archetype classification
+
+Classify the archetype **after** the problem statement, target users, and at least one must-have feature are settled. Do not classify on the first exchange.
+
+**Derive the classification — do not ask.** Read the problem framing and feature set, apply the table below, and present your classification with reasoning. The user confirms, modifies, or overrides.
+
+### Classification table
+
+| Archetype | Core signal | Discriminating question |
+|---|---|---|
+| `domain_system` | The system IS business logic — entities have lifecycle, ownership, and invariants that span operations. "Cannot do X if Y is in state Z." | Would a domain expert argue about who owns this entity and under what conditions it can change? |
+| `data_pipeline` | The system moves and transforms data between sources and sinks. State is transient or pass-through. Complexity is in correctness and failure handling, not in business rules. | Is the data the product, and the system just shapes it? |
+| `system_integration` | The system connects external systems you don't own. Complexity is in contracts, translation layers, and ownership boundaries — not in domain logic. | Is the primary challenge what you control vs what you don't? |
+| `process_system` | The system orchestrates actors (human or automated) through defined steps with decision points and triggers. Complexity is in the workflow structure and automation boundaries. | Is there a defined sequence of steps with roles, approvals, or triggers? |
+
+**Layered case** (`system_integration + process_system`): the system integrates external constraints AND orchestrates a workflow within them. Both apply. Example: onboarding a customer into three external platforms (integration) via a defined approval sequence (process).
+
+### Confidence rules
+
+| Situation | `archetype_confidence` | Action |
+|---|---|---|
+| One archetype fits cleanly, signals are unambiguous | `high` | Present and proceed |
+| Two archetypes could fit — one is clearly dominant | `medium` | Present primary with reasoning; name the secondary and why it lost |
+| Signals genuinely split across archetypes | `low` | Present your best read; surface the ambiguity as an open question |
+
+### Output discipline
+
+Add these four fields to every `write_prd` call:
+
+```
+primary_archetype:    domain_system | data_pipeline | system_integration | process_system
+secondary_archetype:  process_system | null   (only valid secondary today)
+archetype_confidence: high | medium | low
+archetype_reasoning:  one or two sentences — which signals drove the classification and why alternatives were ruled out
+```
+
+`archetype_reasoning` must name specific evidence from the problem statement or features. Reject: "this seems like a domain system." Accept: "Expense aggregate has lifecycle state (submitted → approved → paid) with invariants that cross actor boundaries — classic domain_system signals. No significant external system integration or pipeline characteristics."
+
+---
+
 ## Refinement reasoning sequence
 
 When you receive a current PRD and human feedback, reason in this order before writing:
@@ -139,6 +179,8 @@ Set once on creation. Do not change it on refinement turns.
 **source_idea**
 On v1 only: pass the user's verbatim original idea as the `source_idea` field.
 On refinement turns: omit this field entirely.
+
+**Archetype fields are required on every `write_prd` call.** `primary_archetype`, `archetype_confidence`, and `archetype_reasoning` must always be present. `secondary_archetype` is required only for the layered case (`system_integration + process_system`) — omit it otherwise. The engine locks these fields after v1 — you cannot change them on refinement turns.
 
 **Never pass brief_path or any artifact path to write_prd.** The engine resolves the upstream Brief from the slug automatically.
 

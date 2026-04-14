@@ -68,15 +68,20 @@ Refine by answering open questions, then approve:
 approve
 ```
 
-Claude calls `approve_prd` → `status: "approved"` set. DAG advances to Domain Agent.
+Claude calls `approve_prd` → `status: "approved"` set. The PRD declares the problem archetype (`domain_system`, `data_pipeline`, `system_integration`, or `process_system`). The engine routes the slug to the correct model stage.
 
-### 4. Model the domain (Domain Agent)
+### 4. Model the problem (Model Agent)
 
-```
-/domain-agent <slug>
-```
+The command depends on the archetype declared in the approved PRD:
 
-Claude reads the approved PRD, challenges ownership ambiguities, then drafts a bounded-context domain model on signal. Approve when satisfied — DAG advances to Architecture Agent.
+| Archetype | Command | Produces |
+|---|---|---|
+| `domain_system` | `/model-domain <slug>` | Bounded-context domain model |
+| `data_pipeline` | `/model-data-flow <slug>` | Data flow model |
+| `system_integration` | `/model-system <slug>` | System integration model |
+| `process_system` | `/model-workflow <slug>` | Workflow model |
+
+Each agent is a specialist for its problem type. It challenges in plain business language, translates internally into the correct model structure, and drafts on signal. Approve when satisfied — DAG advances to Architecture Agent.
 
 ### 5. Design the architecture (Architecture Agent)
 
@@ -161,7 +166,7 @@ Tests are organized by **what they protect**, not by the file they test. The fou
 │   └── commands/
 │       ├── brainstorm.md          # /brainstorm slash command
 │       ├── product-owner.md       # /product-owner slash command
-│       ├── domain-agent.md        # /domain-agent slash command
+│       ├── model-domain.md        # /model-domain slash command (domain_system archetype)
 │       ├── architecture-agent.md  # /architecture-agent slash command
 │       ├── tech-stack-agent.md    # /tech-stack-agent slash command
 │       └── design.md              # /design slash command (Systems Architect)

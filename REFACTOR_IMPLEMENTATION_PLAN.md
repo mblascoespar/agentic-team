@@ -142,20 +142,22 @@ The correct model: scan approved artifacts and ask "what's next?" — one stage 
 
 **Gates:** Step 6 (Architecture Agent needs correct model artifact as input)
 
-**Design required before implementing** — session models have not been specified. Open questions per archetype:
-- `domain_system`: adapt current Domain Agent DDD challenge loop
-- `data_pipeline`: what to challenge? (input schema, stage boundaries, failure modes, idempotency)
-- `system_integration`: (what systems, what you control vs don't, contracts)
-- `process_system`: (actors, steps, what can fail, what needs automation)
-- Layered case: System Model first (constraints), then Workflow Model within those constraints
+**Design decisions locked:**
+- One command per archetype — split is about specialization, not routing convenience
+- Plain language in, model out — agent absorbs domain vocabulary; user works in business language
+- Complexity calibration — agent reads `complexity_assessment.scope` from Brief to set challenge depth
+- Schema evolution via `update_schema` — agent calls it mid-session when a concept has no field
+- Refinement consistency — before v2+ write, check answered questions incorporated and changed areas reflected in relationship map
+- Decision log — always passed on write; v1 captures challenge decisions, v2+ captures what feedback resolved
+- Artifact schema lives in `engine/schemas/` — not redefined in the prompt
+- Rich challenge criteria — each criterion has good/bad examples and anti-patterns; agent knows what a lazy answer looks like
 
-#### Tasks (pending design)
-- [ ] Design `domain_system` challenge loop (adapt current)
-- [ ] Design `data_pipeline` challenge loop
-- [ ] Design `system_integration` challenge loop
-- [ ] Design `process_system` challenge loop
-- [ ] Design layered case session flow (two-phase, two approval gates)
-- [ ] Write system prompts: `model-agent-domain.md`, `model-agent-data-flow.md`, `model-agent-system.md`, `model-agent-workflow.md`
+#### Tasks
+- [x] Design and write `domain_system` challenge loop — `/model-domain`; `domain-agent.md` retired
+- [ ] Design and write `data_pipeline` challenge loop — `/model-data-flow`
+- [ ] Design and write `system_integration` challenge loop — `/model-system`
+- [ ] Design and write `process_system` challenge loop — `/model-workflow`
+- [ ] Layered case session flow (two-phase, two approval gates)
 
 ---
 
