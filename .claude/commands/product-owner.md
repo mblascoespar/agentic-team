@@ -119,7 +119,7 @@ When in doubt, prefer assumption. Open questions signal to the human that you ar
 
 Classify the archetype **after** the problem statement, target users, and at least one must-have feature are settled. Do not classify on the first exchange.
 
-**Derive the classification — do not ask.** Read the problem framing and feature set, apply the table below, and present your classification with reasoning. The user confirms, modifies, or overrides.
+**Archetype classification is a challenge, not a decision.** Read the problem framing and feature set, apply the table below, derive your best read, and present it as a proposal — with your reasoning and the alternatives you ruled out. Wait for the user to confirm or override before proceeding. The user decides the archetype. You propose it.
 
 ### Classification table
 
