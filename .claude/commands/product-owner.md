@@ -117,9 +117,26 @@ When in doubt, prefer assumption. Open questions signal to the human that you ar
 
 ## Archetype classification
 
-Classify the archetype **after** the problem statement, target users, and at least one must-have feature are settled. Do not classify on the first exchange.
+**The archetype is locked at entry point — before reading the Brief, before any challenge.**
 
-**Archetype classification is a challenge, not a decision.** Read the problem framing and feature set, apply the table below, derive your best read, and present it as a proposal — with your reasoning and the alternatives you ruled out. Wait for the user to confirm or override before proceeding. The user decides the archetype. You propose it.
+If the user passed an archetype as an argument (e.g. `/product-owner my-slug system_evolution`), use it directly. Do not re-derive it during the challenge loop.
+
+If no archetype was passed, your first response — before reading the Brief or asking any other question — is:
+
+> "What type of initiative is this?
+>
+> 1. `domain_system` — building a new system where the core challenge is business rules: who owns what, what's allowed under what conditions
+> 2. `data_pipeline` — building something that moves or transforms data between sources and destinations
+> 3. `system_integration` — connecting systems you don't own; the hard part is working within what those systems impose
+> 4. `process_system` — orchestrating a workflow: actors, steps, approvals, triggers
+> 5. `system_evolution` — changing an existing system: adding features, modifying behavior, or redesigning internals while preserving what callers depend on
+> 6. `system_integration + process_system` (layered) — integrating external systems AND orchestrating a workflow within them
+>
+> Pick a number or name. You can also say 'not sure' and I'll propose one after reading the Brief."
+
+Wait for the user's answer. Lock it. Do not challenge it — the user's stated intent is the ground truth.
+
+If the user says "not sure": read the Brief, propose one archetype with your reasoning and the alternatives you ruled out, wait for confirmation. Do not proceed until confirmed.
 
 ### Classification table
 
@@ -183,6 +200,8 @@ On refinement turns: omit this field entirely.
 
 **Archetype fields are required on every `write_prd` call.** `primary_archetype`, `archetype_confidence`, and `archetype_reasoning` must always be present. `secondary_archetype` is required only for the layered case (`system_integration + process_system`) — omit it otherwise. The engine locks these fields after v1 — you cannot change them on refinement turns.
 
+`primary_archetype` must match the archetype locked at entry point — never re-derived during the challenge loop. `archetype_confidence` is always `high` when the user stated it explicitly; use `medium` or `low` only when the user said "not sure" and you proposed it.
+
 **Never pass brief_path or any artifact path to write_prd.** The engine resolves the upstream Brief from the slug automatically.
 
 - When drafting: call `write_prd` exactly once. No prose before or after the tool call.
@@ -232,9 +251,14 @@ Extract the slug from the path (the segment between `artifacts/` and `/prd/`). E
 
 ---
 
-### Case 3 — Slug (short hyphenated string, e.g. `deploy-rollback`)
+### Case 3 — Slug with optional archetype (e.g. `deploy-rollback` or `deploy-rollback system_evolution`)
 
-Call `get_available_artifacts` with `stage: "prd"`. Look for the slug in the results:
+Parse `$ARGUMENTS`: the first token is the slug, the optional second token (and third, for the layered case) is the archetype.
+
+- If archetype present in arguments: lock it immediately. Do not ask.
+- If archetype absent: ask the archetype question (see Archetype classification section above) before doing anything else. Wait for the answer. Lock it.
+
+Then call `get_available_artifacts` with `stage: "prd"`. Look for the slug in the results:
 
 - Found in `in_progress` or `approved`: call `read_artifact` with that slug and stage `"prd"` (latest version), then proceed as Case 2.
 - Found in `ready_to_start`: call `read_artifact` with that slug and stage `"brief"` to load the upstream Brief, then enter the creation challenge loop — address Brief `open_questions` first, then your own, until the user signals readiness to draft.
