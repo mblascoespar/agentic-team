@@ -5,26 +5,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from jsonschema import validate as _jsonschema_validate, ValidationError
-
 
 _SCHEMAS_DIR = Path(__file__).parent / "schemas"
 
 # ---------------------------------------------------------------------------
-# Input schema loading — single source of truth is engine/schemas/
+# Archetype, topology, and stage configuration
 # ---------------------------------------------------------------------------
-
-_BRIEF_INPUT_SCHEMA        = json.loads((_SCHEMAS_DIR / "brief.input.json").read_text())
-_PRD_INPUT_SCHEMA          = json.loads((_SCHEMAS_DIR / "prd.input.json").read_text())
-_DOMAIN_MODEL_INPUT_SCHEMA = json.loads((_SCHEMAS_DIR / "domain.input.json").read_text())
-_DESIGN_INPUT_SCHEMA       = json.loads((_SCHEMAS_DIR / "design.input.json").read_text())
-_TECH_STACK_INPUT_SCHEMA   = json.loads((_SCHEMAS_DIR / "tech_stack.input.json").read_text())
-
-_PRD_CONTENT_KEYS = (
-    "title", "problem", "target_users", "goals", "success_metrics",
-    "scope_in", "scope_out", "features", "assumptions", "open_questions",
-    "primary_archetype", "secondary_archetype", "archetype_confidence", "archetype_reasoning",
-)
 
 # archetype_confidence intentionally omitted: agents may revise confidence on refinements
 _ARCHETYPE_LOCKED_KEYS = ("primary_archetype", "secondary_archetype", "archetype_reasoning")
@@ -47,39 +33,84 @@ _DAG_TOPOLOGIES: dict[tuple, list[str]] = {
     ("system_integration", "process_system"): ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"],
 }
 
-_BRIEF_CONTENT_KEYS = (
-    "idea", "alternatives", "chosen_direction",
-    "competitive_scan", "complexity_assessment", "open_questions",
-)
+_BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
+    "model_domain":              "model-domain.json",
+    "model_data_flow":           "model-data-flow.json",
+    "model_system":              "model-system.json",
+    "model_workflow":            "model-workflow.json",
+    "model_evolution":           "model-evolution.json",
+    "brief":                     "brief.base.json",
+    "prd":                       "prd.base.json",
+    "tech_stack":                "tech_stack.base.json",
+    # design base schema key is "design-{primary_archetype}" — resolved at write time
+    "design-domain_system":      "design-domain_system.json",
+    "design-data_pipeline":      "design-data_pipeline.json",
+    "design-system_integration": "design-system_integration.json",
+    "design-process_system":     "design-process_system.json",
+    "design-system_evolution":   "design-system_evolution.json",
+}
 
-_DESIGN_CONTENT_KEYS = (
-    "layering_strategy", "aggregate_consistency", "integration_patterns",
-    "storage", "cross_cutting", "testing_strategy", "nfrs", "open_questions",
-)
-
-_TECH_STACK_CONTENT_KEYS = ("adrs", "open_questions")
+# Per-stage engine configuration: upstream resolution, locked content fields,
+# artifact id prefix, and author tag written to decision_log entries.
+# upstream="topology" means the preceding stage is resolved from the DAG at write time.
+_STAGE_CONFIG: dict[str, dict] = {
+    "brief": {
+        "upstream":      None,
+        "locked_fields": frozenset({"idea"}),
+        "id_prefix":     "brief",
+        "author":        "agent:brainstorm-agent",
+    },
+    "prd": {
+        "upstream":      "brief",
+        "locked_fields": frozenset(_ARCHETYPE_LOCKED_KEYS),
+        "id_prefix":     "prd",
+        "author":        "agent:product-agent",
+    },
+    "model_domain": {
+        "upstream":      "topology",
+        "locked_fields": frozenset(),
+        "id_prefix":     "model-domain",
+        "author":        "agent:model-agent-domain",
+    },
+    "model_data_flow": {
+        "upstream":      "topology",
+        "locked_fields": frozenset(),
+        "id_prefix":     "model-data-flow",
+        "author":        "agent:model-agent-data_flow",
+    },
+    "model_system": {
+        "upstream":      "topology",
+        "locked_fields": frozenset(),
+        "id_prefix":     "model-system",
+        "author":        "agent:model-agent-system",
+    },
+    "model_workflow": {
+        "upstream":      "topology",
+        "locked_fields": frozenset(),
+        "id_prefix":     "model-workflow",
+        "author":        "agent:model-agent-workflow",
+    },
+    "model_evolution": {
+        "upstream":      "topology",
+        "locked_fields": frozenset(),
+        "id_prefix":     "model-evolution",
+        "author":        "agent:model-agent-evolution",
+    },
+    "design": {
+        "upstream":      "topology",
+        "locked_fields": frozenset(),
+        "id_prefix":     "design",
+        "author":        "agent:architecture-agent",
+    },
+    "tech_stack": {
+        "upstream":      "design",
+        "locked_fields": frozenset(),
+        "id_prefix":     "tech-stack",
+        "author":        "agent:tech-stack-agent",
+    },
+}
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
-
-# Model stages that have a base schema in engine/schemas/.
-# Other stages (brief, prd, domain, design, tech_stack) use an empty schema.
-_BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
-    "model_domain":    "model-domain.json",
-    "model_data_flow": "model-data-flow.json",
-    "model_system":    "model-system.json",
-    "model_workflow":  "model-workflow.json",
-    "model_evolution": "model-evolution.json",
-}
-
-# Maps model_type argument to the artifact stage directory.
-# Single source of truth for write_model routing and MCP server dispatch.
-_MODEL_TYPE_TO_STAGE: dict[str, str] = {
-    "domain":     "model_domain",
-    "data_flow":  "model_data_flow",
-    "system":     "model_system",
-    "workflow":   "model_workflow",
-    "evolution":  "model_evolution",
-}
 
 # ---------------------------------------------------------------------------
 # Artifact directory resolution — CWD-relative for portability
@@ -162,17 +193,19 @@ def read_artifact(slug: str, stage: str, version: int | None = None) -> dict:
 # Instance schema helpers
 # ---------------------------------------------------------------------------
 
-def _ensure_instance_schema(slug: str, stage: str) -> None:
+def _init_schema(slug: str, stage: str, base_schema_key: str | None = None) -> None:
     """Create schema.json for slug/stage if it does not exist yet.
 
     Copies the base schema from engine/schemas/ when one is defined for the
     stage. Falls back to an empty schema for stages without a base schema.
-    Called on the first write_* for a slug/stage — idempotent on subsequent calls.
+    base_schema_key overrides the lookup key (used for design: "design-{archetype}").
+    Called on the first write for a slug/stage — idempotent on subsequent calls.
     """
     schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
     if schema_path.exists():
         return
-    base_filename = _BASE_SCHEMAS_BY_STAGE.get(stage)
+    lookup_key = base_schema_key if base_schema_key is not None else stage
+    base_filename = _BASE_SCHEMAS_BY_STAGE.get(lookup_key)
     if base_filename is not None:
         base_schema = json.loads((_SCHEMAS_DIR / base_filename).read_text())
     else:
@@ -181,28 +214,56 @@ def _ensure_instance_schema(slug: str, stage: str) -> None:
     schema_path.write_text(json.dumps(base_schema, indent=2))
 
 
-def handle_update_schema(slug: str, stage: str, field_name: str, kind: str, description: str) -> dict:
-    """Add a field to the instance schema for slug/stage.
+def _validate_mandatory_fields(artifact_path: Path, content: dict, caller: str) -> None:
+    """Raise ValueError if any mandatory schema fields are absent from content.
 
-    Rejects: field already exists, kind not in {mandatory, optional}, empty
-    field_name, empty description. Auto-appends a decision_log entry to the
-    schema file with trigger: "schema_field_added".
+    Reads schema.json from artifact_path.parent. No-ops when schema.json does
+    not exist (stages without a schema have no mandatory fields to enforce).
     """
-    _validate_slug_format(slug, "update_schema")
+    schema_path = artifact_path.parent / "schema.json"
+    if not schema_path.exists():
+        return
+    schema = json.loads(schema_path.read_text())
+    mandatory = [
+        name for name, field in schema.get("fields", {}).items()
+        if field.get("kind") == "mandatory"
+    ]
+    missing = [f for f in mandatory if f not in content]
+    if missing:
+        raise ValueError(
+            f"ERROR [{caller}]: cannot approve — missing mandatory fields: "
+            f"{', '.join(missing)}. Add these fields before approving."
+        )
 
+
+def _clear_draft_content_key(slug: str, stage: str, key: str) -> None:
+    """Remove a key from the content of the latest draft artifact, if present."""
+    draft_path = find_latest(slug, stage, status="draft")
+    if draft_path is None:
+        return
+    artifact = json.loads(draft_path.read_text())
+    content = artifact.get("content", {})
+    if key in content:
+        del content[key]
+        artifact["content"] = content
+        draft_path.write_text(json.dumps(artifact, indent=2))
+
+
+def handle_add_schema_field(slug: str, stage: str, field_name: str, kind: str, description: str) -> dict:
+    _validate_slug_format(slug, "add_schema_field")
     if kind not in {"mandatory", "optional"}:
         raise ValueError(
-            f"ERROR [update_schema]: kind must be 'mandatory' or 'optional', got '{kind}'."
+            f"ERROR [add_schema_field]: kind must be 'mandatory' or 'optional', got '{kind}'."
         )
     if not field_name or not field_name.strip():
-        raise ValueError("ERROR [update_schema]: field_name must not be empty.")
+        raise ValueError("ERROR [add_schema_field]: field_name must not be empty.")
     if not description or not description.strip():
-        raise ValueError("ERROR [update_schema]: description must not be empty.")
+        raise ValueError("ERROR [add_schema_field]: description must not be empty.")
 
     schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
     if not schema_path.exists():
         raise ValueError(
-            f"ERROR [update_schema]: no schema found for slug '{slug}', stage '{stage}'. "
+            f"ERROR [add_schema_field]: no schema found for slug '{slug}', stage '{stage}'. "
             f"The stage must be written at least once before the schema can be updated."
         )
 
@@ -211,7 +272,7 @@ def handle_update_schema(slug: str, stage: str, field_name: str, kind: str, desc
 
     if field_name in fields:
         raise ValueError(
-            f"ERROR [update_schema]: field '{field_name}' already exists in the schema for "
+            f"ERROR [add_schema_field]: field '{field_name}' already exists in the schema for "
             f"slug '{slug}', stage '{stage}'. Choose a different name."
         )
 
@@ -222,6 +283,103 @@ def handle_update_schema(slug: str, stage: str, field_name: str, kind: str, desc
         "field_name": field_name,
         "kind": kind,
         "description": description.strip(),
+    })
+
+    schema_path.write_text(json.dumps(schema, indent=2))
+    return schema
+
+
+def handle_update_schema_field(
+    slug: str,
+    stage: str,
+    field_name: str,
+    kind: str | None = None,
+    description: str | None = None,
+    new_field_name: str | None = None,
+) -> dict:
+    _validate_slug_format(slug, "update_schema_field")
+    if not any([kind, description, new_field_name]):
+        raise ValueError(
+            "ERROR [update_schema_field]: at least one of kind, description, or new_field_name must be provided."
+        )
+    if kind is not None and kind not in {"mandatory", "optional"}:
+        raise ValueError(
+            f"ERROR [update_schema_field]: kind must be 'mandatory' or 'optional', got '{kind}'."
+        )
+
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    if not schema_path.exists():
+        raise ValueError(
+            f"ERROR [update_schema_field]: no schema found for slug '{slug}', stage '{stage}'."
+        )
+
+    schema = json.loads(schema_path.read_text())
+    fields = schema.setdefault("fields", {})
+
+    if field_name not in fields:
+        raise ValueError(
+            f"ERROR [update_schema_field]: field '{field_name}' does not exist in the schema for "
+            f"slug '{slug}', stage '{stage}'."
+        )
+
+    if new_field_name is not None and new_field_name != field_name and new_field_name in fields:
+        raise ValueError(
+            f"ERROR [update_schema_field]: field '{new_field_name}' already exists in the schema."
+        )
+
+    field = fields[field_name]
+    if kind is not None:
+        field["kind"] = kind
+    if description is not None:
+        field["description"] = description.strip()
+
+    log_entry: dict = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trigger": "schema_field_updated",
+        "field_name": field_name,
+    }
+    if new_field_name is not None:
+        fields[new_field_name] = fields.pop(field_name)
+        _clear_draft_content_key(slug, stage, field_name)
+        log_entry["new_field_name"] = new_field_name
+    if kind is not None:
+        log_entry["kind"] = kind
+    if description is not None:
+        log_entry["description"] = description.strip()
+
+    schema.setdefault("decision_log", []).append(log_entry)
+    schema_path.write_text(json.dumps(schema, indent=2))
+    return schema
+
+
+def handle_delete_schema_field(slug: str, stage: str, field_name: str, justification: str) -> dict:
+    _validate_slug_format(slug, "delete_schema_field")
+    if not justification or not justification.strip():
+        raise ValueError("ERROR [delete_schema_field]: justification must not be empty.")
+
+    schema_path = _get_artifacts_dir() / slug / stage / "schema.json"
+    if not schema_path.exists():
+        raise ValueError(
+            f"ERROR [delete_schema_field]: no schema found for slug '{slug}', stage '{stage}'."
+        )
+
+    schema = json.loads(schema_path.read_text())
+    fields = schema.setdefault("fields", {})
+
+    if field_name not in fields:
+        raise ValueError(
+            f"ERROR [delete_schema_field]: field '{field_name}' does not exist in the schema for "
+            f"slug '{slug}', stage '{stage}'."
+        )
+
+    del fields[field_name]
+    _clear_draft_content_key(slug, stage, field_name)
+
+    schema.setdefault("decision_log", []).append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trigger": "schema_field_deleted",
+        "field_name": field_name,
+        "justification": justification.strip(),
     })
 
     schema_path.write_text(json.dumps(schema, indent=2))
@@ -324,6 +482,63 @@ def get_available_artifacts(stage: str) -> dict:
     return result
 
 
+def handle_get_work_context(slug: str, stage: str) -> dict:
+    """Return the approved upstream artifact and current draft for a DAG stage.
+
+    Provides everything an agent needs to start or continue work on a stage:
+    the approved upstream output and any in-progress draft already written.
+    """
+    _validate_slug_format(slug, "get_work_context")
+
+    if stage == "brief":
+        raise ValueError(
+            "ERROR [get_work_context]: stage 'brief' has no upstream. "
+            "Use get_available_artifacts instead."
+        )
+
+    topology = _resolve_topology(slug)
+    if topology is None:
+        raise ValueError(
+            f"ERROR [get_work_context]: cannot determine topology for '{slug}'. "
+            "Approve the PRD first."
+        )
+
+    if stage not in topology:
+        raise ValueError(
+            f"ERROR [get_work_context]: stage '{stage}' is not in the topology for '{slug}'."
+        )
+
+    idx = topology.index(stage)
+    upstream_stage = topology[idx - 1]
+
+    upstream_path = find_latest(slug, upstream_stage, status="approved")
+    if upstream_path is None:
+        agent_hint = upstream_stage.replace("_", "-")
+        raise ValueError(
+            f"ERROR [get_work_context]: '{upstream_stage}' for '{slug}' is not approved. "
+            f"Approve it first with /{agent_hint}."
+        )
+
+    artifacts_dir = _get_artifacts_dir()
+    upstream_artifact = json.loads(upstream_path.read_text())
+    upstream_schema_path = artifacts_dir / slug / upstream_stage / "schema.json"
+    upstream_schema = json.loads(upstream_schema_path.read_text()) if upstream_schema_path.exists() else {}
+
+    draft_path = find_latest(slug, stage, status="draft")
+    if draft_path is not None:
+        draft_artifact = json.loads(draft_path.read_text())
+        draft_schema_path = artifacts_dir / slug / stage / "schema.json"
+        draft_schema = json.loads(draft_schema_path.read_text()) if draft_schema_path.exists() else {}
+        current_draft = {"artifact": draft_artifact, "schema": draft_schema}
+    else:
+        current_draft = None
+
+    return {
+        "upstream": {"artifact": upstream_artifact, "schema": upstream_schema},
+        "current_draft": current_draft,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Validation helpers — engine owns all validation
 # ---------------------------------------------------------------------------
@@ -373,299 +588,130 @@ def _validate_approve_path(artifact_path: str, handler_name: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Archetype helpers
+# Primary archetype helper
 # ---------------------------------------------------------------------------
 
-def _fmt_combinations() -> str:
-    parts = []
-    for combo in sorted(_VALID_COMBINATIONS):
-        if len(combo) == 1:
-            parts.append(f"primary={combo[0]!r}")
-        else:
-            parts.append(f"primary={combo[0]!r} + secondary={combo[1]!r}")
-    return ", ".join(parts)
-
-
-def _validate_archetype_combination(primary: str, secondary: str | None) -> None:
-    combo = (primary, secondary) if secondary else (primary,)
-    if combo not in _VALID_COMBINATIONS:
-        raise ValueError(
-            f"ERROR [write_prd]: unsupported archetype combination "
-            f"primary={primary!r} secondary={secondary!r}. "
-            f"Valid combinations: {_fmt_combinations()}"
-        )
-
+def _read_primary_archetype(slug: str) -> str | None:
+    """Return primary_archetype from the approved PRD for slug, or None."""
+    prd_path = find_latest(slug, "prd", status="approved")
+    if prd_path is None:
+        return None
+    return json.loads(prd_path.read_text()).get("content", {}).get("primary_archetype")
 
 
 # ---------------------------------------------------------------------------
-# Handlers
+# Generic artifact handlers
 # ---------------------------------------------------------------------------
 
-def handle_write_model(tool_input: dict, existing_model: dict | None = None) -> dict:
-    """Write or update a model artifact for any archetype.
+def handle_write_artifact(
+    slug: str,
+    stage: str,
+    body: dict,
+    decision_log_entry: dict | None = None,
+) -> dict:
+    """Write or update any artifact stage. Body is stored verbatim as content.
 
-    Routes to the correct stage directory based on model_type. Validates that
-    model_type is present in the topology for the slug's approved PRD. On v1,
-    derives the upstream reference from the topology (prd, or model_system for
-    the layered workflow case). Creates instance schema on first write.
+    On v1: verifies upstream is approved, builds references, derives source_idea
+    (prd), model_type (model_* stages), and primary_archetype (all non-brief stages).
+    On v2+: enforces locked_fields from the existing artifact content.
     """
-    tool_input = dict(tool_input)  # defensive copy — handler pops decision_log_entry
-    slug = tool_input.get("slug", "")
-    _validate_slug_format(slug, "write_model")
-
-    model_type = tool_input.get("model_type", "")
-    stage = _MODEL_TYPE_TO_STAGE.get(model_type)
-    if stage is None:
+    _validate_slug_format(slug, "write_artifact")
+    if stage not in _STAGE_CONFIG:
         raise ValueError(
-            f"ERROR [write_model]: unsupported model_type '{model_type}'. "
-            f"Valid types: {', '.join(sorted(_MODEL_TYPE_TO_STAGE))}."
+            f"ERROR [write_artifact]: unknown stage '{stage}'. "
+            f"Valid stages: {', '.join(sorted(_STAGE_CONFIG))}."
         )
 
-    topology = _resolve_topology(slug)
-    if topology is None:
-        raise ValueError(
-            f"ERROR [write_model]: cannot determine topology for slug '{slug}'. "
-            f"Approve the PRD first."
-        )
-    if stage not in topology:
-        raise ValueError(
-            f"ERROR [write_model]: model_type '{model_type}' (stage '{stage}') is not in "
-            f"the topology for slug '{slug}'. Check the PRD archetype."
-        )
-
+    config = _STAGE_CONFIG[stage]
     artifacts_dir = _get_artifacts_dir()
     now = datetime.now(timezone.utc).isoformat()
-    log_entry_input = tool_input.pop("decision_log_entry", None)
-    content = tool_input.get("content", {})
 
-    if existing_model is None:
-        idx = topology.index(stage)
-        upstream_stage = topology[idx - 1]
-        upstream = find_latest(slug, upstream_stage, status="approved")
-        if upstream is None:
-            raise ValueError(
-                f"ERROR [write_model]: no approved {upstream_stage} found for slug '{slug}'. "
-                f"Approve the {upstream_stage} first."
-            )
-        references = [str(upstream.relative_to(artifacts_dir.parent))]
-        model_id = f"model-{model_type}-{uuid.uuid4()}"
+    existing_path = find_latest(slug, stage)
+    existing = json.loads(existing_path.read_text()) if existing_path else None
+
+    if existing is None:
+        upstream_key = config["upstream"]
+        if upstream_key == "topology":
+            topology = _resolve_topology(slug)
+            if topology is None:
+                raise ValueError(
+                    f"ERROR [write_artifact]: cannot determine topology for '{slug}'. "
+                    f"Approve the PRD with archetype fields first."
+                )
+            if stage not in topology:
+                raise ValueError(
+                    f"ERROR [write_artifact]: stage '{stage}' is not in the topology for '{slug}'."
+                )
+            upstream_stage: str | None = topology[topology.index(stage) - 1]
+        else:
+            upstream_stage = upstream_key
+
+        if upstream_stage is not None:
+            upstream_path = find_latest(slug, upstream_stage, status="approved")
+            if upstream_path is None:
+                raise ValueError(
+                    f"ERROR [write_artifact]: no approved {upstream_stage} found for slug '{slug}'. "
+                    f"Approve the {upstream_stage} first."
+                )
+            references = [str(upstream_path.relative_to(artifacts_dir.parent))]
+        else:
+            references = []
+
+        artifact_id = f"{config['id_prefix']}-{uuid.uuid4()}"
         version = 1
         parent_version = None
         created_at = now
-        prior_log = []
+        prior_log: list = []
+
+        source_idea: str | None = None
+        if stage == "prd":
+            brief_data = json.loads(
+                find_latest(slug, "brief", status="approved").read_text()
+            )
+            source_idea = brief_data.get("content", {}).get("idea")
     else:
-        slug = existing_model["slug"]
-        model_id = existing_model["id"]
-        version = existing_model["version"] + 1
-        parent_version = existing_model["version"]
-        created_at = existing_model["created_at"]
-        prior_log = existing_model.get("decision_log", [])
-        references = existing_model.get("references", [])
+        slug = existing["slug"]
+        artifact_id = existing["id"]
+        version = existing["version"] + 1
+        parent_version = existing["version"]
+        created_at = existing["created_at"]
+        prior_log = existing.get("decision_log", [])
+        references = existing.get("references", [])
+        source_idea = existing.get("source_idea") if stage == "prd" else None
+
+        existing_content = existing.get("content", {})
+        for key in config["locked_fields"]:
+            if key in existing_content:
+                body[key] = existing_content[key]
+            else:
+                body.pop(key, None)
 
     folder = artifacts_dir / slug / stage
     folder.mkdir(parents=True, exist_ok=True)
-    _ensure_instance_schema(slug, stage)
 
-    if log_entry_input:
+    if stage == "design":
+        primary_archetype = _read_primary_archetype(slug)
+        _init_schema(
+            slug, stage,
+            base_schema_key=f"design-{primary_archetype}" if primary_archetype else None,
+        )
+    else:
+        _init_schema(slug, stage)
+
+    if decision_log_entry:
         decision_log = prior_log + [{
             "version": version,
             "timestamp": now,
-            "author": f"agent:model-agent-{model_type}",
-            "trigger": log_entry_input.get("trigger", "human_feedback"),
-            "summary": log_entry_input.get("summary", ""),
-            "changed_fields": log_entry_input.get("changed_fields", []),
+            "author": config["author"],
+            "trigger": decision_log_entry.get("trigger", "human_feedback"),
+            "summary": decision_log_entry.get("summary", ""),
+            "changed_fields": decision_log_entry.get("changed_fields", []),
         }]
     else:
         decision_log = prior_log
 
-    artifact = {
-        "id": model_id,
-        "slug": slug,
-        "model_type": model_type,
-        "version": version,
-        "parent_version": parent_version,
-        "created_at": created_at,
-        "updated_at": now,
-        "status": "draft",
-        "references": references,
-        "decision_log": decision_log,
-        "content": content,
-    }
-
-    path = folder / f"v{version}.json"
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_approve_model(artifact_path: str) -> dict:
-    """Approve a model artifact after validating all mandatory schema fields are present."""
-    path = _validate_approve_path(artifact_path, "approve_model")
-    artifact = json.loads(path.read_text())
-
-    model_type = artifact.get("model_type", "")
-    stage = _MODEL_TYPE_TO_STAGE.get(model_type)
-    if stage:
-        schema_path = path.parent / "schema.json"
-        if schema_path.exists():
-            schema = json.loads(schema_path.read_text())
-            mandatory = [
-                name for name, field in schema.get("fields", {}).items()
-                if field.get("kind") == "mandatory"
-            ]
-            missing = [f for f in mandatory if f not in artifact.get("content", {})]
-            if missing:
-                raise ValueError(
-                    f"ERROR [approve_model]: cannot approve — missing mandatory fields: "
-                    f"{', '.join(missing)}. Add these fields before approving."
-                )
-
-    now = datetime.now(timezone.utc).isoformat()
-    artifact["status"] = "approved"
-    artifact["updated_at"] = now
-    artifact.setdefault("decision_log", []).append({
-        "version": artifact["version"],
-        "timestamp": now,
-        "author": "human",
-        "trigger": "approval",
-        "summary": f"Model ({model_type}) approved.",
-        "changed_fields": ["status"],
-    })
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_write_prd(tool_input: dict, existing_prd: dict | None = None) -> dict:
-    _validate_schema(tool_input, _PRD_INPUT_SCHEMA, "write_prd")
-    _validate_slug_format(tool_input.get("slug", ""), "write_prd")
-
-    artifacts_dir = _get_artifacts_dir()
-    now = datetime.now(timezone.utc).isoformat()
-    log_entry_input = tool_input.pop("decision_log_entry", None)
-
-    if existing_prd is None:
-        slug = tool_input["slug"]
-        # Validate archetype combination before the Brief gate: stateless and cheap,
-        # so agents get the right error regardless of upstream artifact state.
-        primary = tool_input["primary_archetype"]
-        secondary = tool_input.get("secondary_archetype")
-        _validate_archetype_combination(primary, secondary)
-
-        upstream = find_latest(slug, "brief", status="approved")
-        if upstream is None:
-            raise ValueError(
-                f"ERROR [write_prd]: no approved Brief found for slug '{slug}'. "
-                f"Run /brainstorm {slug} and approve the Brief first."
-            )
-
-        references = [str(upstream.relative_to(artifacts_dir.parent))]
-        prd_id = f"prd-{uuid.uuid4()}"
-        version = 1
-        parent_version = None
-        created_at = now
-        prior_log = []
-        source_idea = tool_input.get("source_idea")
-    else:
-        slug = existing_prd["slug"]  # orchestrator-enforced: agent cannot change slug
-        prd_id = existing_prd["id"]
-        version = existing_prd["version"] + 1
-        parent_version = existing_prd["version"]
-        created_at = existing_prd["created_at"]
-        prior_log = existing_prd.get("decision_log", [])
-        source_idea = existing_prd["source_idea"]
-        references = existing_prd.get("references", [])
-        # Lock archetype fields on v2+: engine overwrites whatever the agent provided.
-        # Keys absent from v1 are evicted — agents cannot add them on refinement turns.
-        locked_content = existing_prd.get("content", {})
-        for key in _ARCHETYPE_LOCKED_KEYS:
-            if key in locked_content:
-                tool_input[key] = locked_content[key]
-            else:
-                tool_input.pop(key, None)
-
-    folder = artifacts_dir / slug / "prd"
-    folder.mkdir(parents=True, exist_ok=True)
-
-    if log_entry_input:
-        decision_log = prior_log + [{
-            "version": version,
-            "timestamp": now,
-            "author": "agent:product-agent",
-            "trigger": log_entry_input.get("trigger", "human_feedback"),
-            "summary": log_entry_input.get("summary", ""),
-            "changed_fields": log_entry_input.get("changed_fields", []),
-        }]
-    else:
-        decision_log = prior_log
-
-    artifact = {
-        "id": prd_id,
-        "slug": slug,
-        "version": version,
-        "parent_version": parent_version,
-        "created_at": created_at,
-        "updated_at": now,
-        "source_idea": source_idea,
-        "status": "draft",
-        "references": references,
-        "decision_log": decision_log,
-        "content": {k: tool_input[k] for k in _PRD_CONTENT_KEYS if k in tool_input},
-    }
-
-    path = folder / f"v{version}.json"
-    path.write_text(json.dumps(artifact, indent=2))
-
-    return artifact
-
-
-def handle_write_domain_model(tool_input: dict, existing_domain: dict | None = None) -> dict:
-    _validate_schema(tool_input, _DOMAIN_MODEL_INPUT_SCHEMA, "write_domain_model")
-    _validate_slug_format(tool_input.get("slug", ""), "write_domain_model")
-
-    artifacts_dir = _get_artifacts_dir()
-    now = datetime.now(timezone.utc).isoformat()
-    log_entry_input = tool_input.pop("decision_log_entry", None)
-
-    if existing_domain is None:
-        slug = tool_input["slug"]
-        upstream = find_latest(slug, "prd", status="approved")
-        if upstream is None:
-            raise ValueError(
-                f"ERROR [write_domain_model]: no approved PRD found for slug '{slug}'. "
-                f"Approve the PRD first, then call write_domain_model again."
-            )
-        references = [str(upstream.relative_to(artifacts_dir.parent))]
-        domain_id = f"domain-{uuid.uuid4()}"
-        version = 1
-        parent_version = None
-        created_at = now
-        prior_log = []
-    else:
-        slug = existing_domain["slug"]  # orchestrator-enforced: agent cannot change slug
-        domain_id = existing_domain["id"]
-        version = existing_domain["version"] + 1
-        parent_version = existing_domain["version"]
-        created_at = existing_domain["created_at"]
-        prior_log = existing_domain.get("decision_log", [])
-        references = existing_domain.get("references", [])
-
-    folder = artifacts_dir / slug / "domain"
-    folder.mkdir(parents=True, exist_ok=True)
-
-    if log_entry_input:
-        decision_log = prior_log + [{
-            "version": version,
-            "timestamp": now,
-            "author": "agent:domain-agent",
-            "trigger": log_entry_input.get("trigger", "human_feedback"),
-            "summary": log_entry_input.get("summary", ""),
-            "changed_fields": log_entry_input.get("changed_fields", []),
-        }]
-    else:
-        decision_log = prior_log
-
-    content_keys = ("bounded_contexts", "context_map", "assumptions", "open_questions")
-    artifact = {
-        "id": domain_id,
+    artifact: dict = {
+        "id": artifact_id,
         "slug": slug,
         "version": version,
         "parent_version": parent_version,
@@ -674,18 +720,30 @@ def handle_write_domain_model(tool_input: dict, existing_domain: dict | None = N
         "status": "draft",
         "references": references,
         "decision_log": decision_log,
-        "content": {k: tool_input[k] for k in content_keys if k in tool_input},
+        "content": body,
     }
+
+    if stage == "prd" and source_idea is not None:
+        artifact["source_idea"] = source_idea
+    if stage.startswith("model_"):
+        artifact["model_type"] = stage.removeprefix("model_")
+    if stage != "brief":
+        archetype = _read_primary_archetype(slug)
+        if archetype is not None:
+            artifact["primary_archetype"] = archetype
 
     path = folder / f"v{version}.json"
     path.write_text(json.dumps(artifact, indent=2))
     return artifact
 
 
-def handle_approve_domain_model(artifact_path: str) -> dict:
-    path = _validate_approve_path(artifact_path, "approve_domain_model")
+def handle_approve_artifact(artifact_path: str) -> dict:
+    """Approve any artifact after validating all mandatory schema fields are present."""
+    path = _validate_approve_path(artifact_path, "approve_artifact")
     artifact = json.loads(path.read_text())
+    _validate_mandatory_fields(path, artifact.get("content", {}), "approve_artifact")
     now = datetime.now(timezone.utc).isoformat()
+    stage_label = path.parent.name.replace("_", " ")
     artifact["status"] = "approved"
     artifact["updated_at"] = now
     artifact.setdefault("decision_log", []).append({
@@ -693,304 +751,7 @@ def handle_approve_domain_model(artifact_path: str) -> dict:
         "timestamp": now,
         "author": "human",
         "trigger": "approval",
-        "summary": "Domain model approved.",
-        "changed_fields": ["status"],
-    })
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_approve_prd(artifact_path: str) -> dict:
-    path = _validate_approve_path(artifact_path, "approve_prd")
-    artifact = json.loads(path.read_text())
-    now = datetime.now(timezone.utc).isoformat()
-    artifact["status"] = "approved"
-    artifact["updated_at"] = now
-    artifact.setdefault("decision_log", []).append({
-        "version": artifact["version"],
-        "timestamp": now,
-        "author": "human",
-        "trigger": "approval",
-        "summary": "PRD approved.",
-        "changed_fields": ["status"],
-    })
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_write_brief(tool_input: dict, existing_brief: dict | None = None) -> dict:
-    _validate_schema(tool_input, _BRIEF_INPUT_SCHEMA, "write_brief")
-    _validate_slug_format(tool_input.get("slug", ""), "write_brief")
-
-    artifacts_dir = _get_artifacts_dir()
-    now = datetime.now(timezone.utc).isoformat()
-    log_entry_input = tool_input.pop("decision_log_entry", None)
-
-    if existing_brief is None:
-        slug = tool_input["slug"]
-        brief_id = f"brief-{uuid.uuid4()}"
-        version = 1
-        parent_version = None
-        created_at = now
-        prior_log = []
-        idea = tool_input.get("idea")
-    else:
-        slug = existing_brief["slug"]  # orchestrator-enforced: agent cannot change slug
-        brief_id = existing_brief["id"]
-        version = existing_brief["version"] + 1
-        parent_version = existing_brief["version"]
-        created_at = existing_brief["created_at"]
-        prior_log = existing_brief.get("decision_log", [])
-        idea = existing_brief["content"]["idea"]  # locked from v1
-
-    folder = artifacts_dir / slug / "brief"
-    folder.mkdir(parents=True, exist_ok=True)
-
-    if log_entry_input:
-        decision_log = prior_log + [{
-            "version": version,
-            "timestamp": now,
-            "author": "agent:brainstorm-agent",
-            "trigger": log_entry_input.get("trigger", "human_feedback"),
-            "summary": log_entry_input.get("summary", ""),
-            "changed_fields": log_entry_input.get("changed_fields", []),
-        }]
-    else:
-        decision_log = prior_log
-
-    content = {k: tool_input[k] for k in _BRIEF_CONTENT_KEYS if k in tool_input}
-    content["idea"] = idea  # always use the locked value
-
-    artifact = {
-        "id": brief_id,
-        "slug": slug,
-        "version": version,
-        "parent_version": parent_version,
-        "created_at": created_at,
-        "updated_at": now,
-        "status": "draft",
-        "references": [],
-        "decision_log": decision_log,
-        "content": content,
-    }
-
-    path = folder / f"v{version}.json"
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_write_design(tool_input: dict, existing_design: dict | None = None) -> dict:
-    _validate_schema(tool_input, _DESIGN_INPUT_SCHEMA, "write_design")
-    _validate_slug_format(tool_input.get("slug", ""), "write_design")
-
-    # Handler-level semantic guards (not enforceable by JSON schema alone)
-    for entry in tool_input.get("integration_patterns", []):
-        if entry.get("acl_needed") and not entry.get("translation_approach", "").strip():
-            raise ValueError(
-                "ERROR [write_design]: integration_pattern with acl_needed=true requires a "
-                "non-empty translation_approach. Add the translation direction and mechanism."
-            )
-    for entry in tool_input.get("layering_strategy", []):
-        if entry.get("cqrs_applied") and not entry.get("cqrs_read_models"):
-            raise ValueError(
-                f"ERROR [write_design]: layering_strategy entry for context '{entry.get('context')}' "
-                "has cqrs_applied=true but cqrs_read_models is missing or empty. "
-                "List the aggregates that need separate read models."
-            )
-
-    artifacts_dir = _get_artifacts_dir()
-    now = datetime.now(timezone.utc).isoformat()
-    log_entry_input = tool_input.pop("decision_log_entry", None)
-
-    if existing_design is None:
-        slug = tool_input["slug"]
-        # Derive upstream model stage from topology rather than hardcoding "domain".
-        # The model stage immediately precedes "design" in every topology.
-        topology = _resolve_topology(slug)
-        if topology is None:
-            raise ValueError(
-                f"ERROR [write_design]: cannot determine topology for slug '{slug}'. "
-                f"Approve the PRD with archetype fields first."
-            )
-        design_idx = topology.index("design")
-        upstream_stage = topology[design_idx - 1]
-        upstream = find_latest(slug, upstream_stage, status="approved")
-        if upstream is None:
-            raise ValueError(
-                f"ERROR [write_design]: no approved {upstream_stage} found for slug '{slug}'. "
-                f"Approve the {upstream_stage} first, then call write_design again."
-            )
-        references = [str(upstream.relative_to(artifacts_dir.parent))]
-        design_id = f"design-{uuid.uuid4()}"
-        version = 1
-        parent_version = None
-        created_at = now
-        prior_log = []
-    else:
-        slug = existing_design["slug"]  # orchestrator-enforced: agent cannot change slug
-        design_id = existing_design["id"]
-        version = existing_design["version"] + 1
-        parent_version = existing_design["version"]
-        created_at = existing_design["created_at"]
-        prior_log = existing_design.get("decision_log", [])
-        references = existing_design.get("references", [])
-
-    folder = artifacts_dir / slug / "design"
-    folder.mkdir(parents=True, exist_ok=True)
-
-    if log_entry_input:
-        decision_log = prior_log + [{
-            "version": version,
-            "timestamp": now,
-            "author": "agent:architecture-agent",
-            "trigger": log_entry_input.get("trigger", "human_feedback"),
-            "summary": log_entry_input.get("summary", ""),
-            "changed_fields": log_entry_input.get("changed_fields", []),
-        }]
-    else:
-        decision_log = prior_log
-
-    artifact = {
-        "id": design_id,
-        "slug": slug,
-        "version": version,
-        "parent_version": parent_version,
-        "created_at": created_at,
-        "updated_at": now,
-        "status": "draft",
-        "references": references,
-        "decision_log": decision_log,
-        "content": {k: tool_input[k] for k in _DESIGN_CONTENT_KEYS if k in tool_input},
-    }
-
-    path = folder / f"v{version}.json"
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_approve_design(artifact_path: str) -> dict:
-    path = _validate_approve_path(artifact_path, "approve_design")
-    artifact = json.loads(path.read_text())
-    now = datetime.now(timezone.utc).isoformat()
-    artifact["status"] = "approved"
-    artifact["updated_at"] = now
-    artifact.setdefault("decision_log", []).append({
-        "version": artifact["version"],
-        "timestamp": now,
-        "author": "human",
-        "trigger": "approval",
-        "summary": "Design artifact approved.",
-        "changed_fields": ["status"],
-    })
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_write_tech_stack(tool_input: dict, existing_tech_stack: dict | None = None) -> dict:
-    _validate_schema(tool_input, _TECH_STACK_INPUT_SCHEMA, "write_tech_stack")
-    _validate_slug_format(tool_input.get("slug", ""), "write_tech_stack")
-
-    # Handler-level semantic guard: every rejection entry must have a non-empty rejection_reason.
-    # (minLength: 1 in the schema guards the field type; this guard provides a clear message.)
-    for adr in tool_input.get("adrs", []):
-        for rejection in adr.get("rejections", []):
-            if not rejection.get("rejection_reason", "").strip():
-                raise ValueError(
-                    f"ERROR [write_tech_stack]: ADR record '{adr.get('decision_point', '')}' "
-                    f"has a rejection entry for '{rejection.get('candidate', '')}' with an empty "
-                    f"rejection_reason. Every non-chosen candidate must have a non-empty rejection_reason."
-                )
-
-    artifacts_dir = _get_artifacts_dir()
-    now = datetime.now(timezone.utc).isoformat()
-    log_entry_input = tool_input.pop("decision_log_entry", None)
-
-    if existing_tech_stack is None:
-        slug = tool_input["slug"]
-        upstream = find_latest(slug, "design", status="approved")
-        if upstream is None:
-            raise ValueError(
-                f"ERROR [write_tech_stack]: no approved Design artifact found for slug '{slug}'. "
-                f"Approve the Design artifact first, then call write_tech_stack again."
-            )
-        references = [str(upstream.relative_to(artifacts_dir.parent))]
-        tech_stack_id = f"tech-stack-{uuid.uuid4()}"
-        version = 1
-        parent_version = None
-        created_at = now
-        prior_log = []
-    else:
-        slug = existing_tech_stack["slug"]  # orchestrator-enforced: agent cannot change slug
-        tech_stack_id = existing_tech_stack["id"]
-        version = existing_tech_stack["version"] + 1
-        parent_version = existing_tech_stack["version"]
-        created_at = existing_tech_stack["created_at"]
-        prior_log = existing_tech_stack.get("decision_log", [])
-        references = existing_tech_stack.get("references", [])
-
-    folder = artifacts_dir / slug / "tech_stack"
-    folder.mkdir(parents=True, exist_ok=True)
-
-    if log_entry_input:
-        decision_log = prior_log + [{
-            "version": version,
-            "timestamp": now,
-            "author": "agent:tech-stack-agent",
-            "trigger": log_entry_input.get("trigger", "human_feedback"),
-            "summary": log_entry_input.get("summary", ""),
-            "changed_fields": log_entry_input.get("changed_fields", []),
-        }]
-    else:
-        decision_log = prior_log
-
-    artifact = {
-        "id": tech_stack_id,
-        "slug": slug,
-        "version": version,
-        "parent_version": parent_version,
-        "created_at": created_at,
-        "updated_at": now,
-        "status": "draft",
-        "references": references,
-        "decision_log": decision_log,
-        "content": {k: tool_input[k] for k in _TECH_STACK_CONTENT_KEYS if k in tool_input},
-    }
-
-    path = folder / f"v{version}.json"
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_approve_tech_stack(artifact_path: str) -> dict:
-    path = _validate_approve_path(artifact_path, "approve_tech_stack")
-    artifact = json.loads(path.read_text())
-    now = datetime.now(timezone.utc).isoformat()
-    artifact["status"] = "approved"
-    artifact["updated_at"] = now
-    artifact.setdefault("decision_log", []).append({
-        "version": artifact["version"],
-        "timestamp": now,
-        "author": "human",
-        "trigger": "approval",
-        "summary": "Tech stack artifact approved.",
-        "changed_fields": ["status"],
-    })
-    path.write_text(json.dumps(artifact, indent=2))
-    return artifact
-
-
-def handle_approve_brief(artifact_path: str) -> dict:
-    path = _validate_approve_path(artifact_path, "approve_brief")
-    artifact = json.loads(path.read_text())
-    now = datetime.now(timezone.utc).isoformat()
-    artifact["status"] = "approved"
-    artifact["updated_at"] = now
-    artifact.setdefault("decision_log", []).append({
-        "version": artifact["version"],
-        "timestamp": now,
-        "author": "human",
-        "trigger": "approval",
-        "summary": "Brief approved.",
+        "summary": f"{stage_label} approved.",
         "changed_fields": ["status"],
     })
     path.write_text(json.dumps(artifact, indent=2))

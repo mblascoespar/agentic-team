@@ -1,0 +1,32 @@
+{
+  "fields": {
+    "integration_contracts": {
+      "kind": "mandatory",
+      "description": "Per-integration architecture decisions: protocol, sync/async pattern, auth strategy, rate limit handling, and ownership"
+    },
+    "error_handling": {
+      "kind": "mandatory",
+      "description": "Retry policy, circuit breaker, timeout, and fallback strategy per integration boundary"
+    },
+    "acl_strategy": {
+      "kind": "mandatory",
+      "description": "Anti-corruption layer design: translation direction, schema ownership, tolerance model for upstream schema changes"
+    },
+    "observability": {
+      "kind": "mandatory",
+      "description": "Distributed tracing across integration boundaries, health checks, and alerting per external dependency"
+    },
+    "testing_strategy": {
+      "kind": "mandatory",
+      "description": "Contract testing approach, integration test strategy, and how external system unavailability is tested"
+    },
+    "nfrs": {
+      "kind": "mandatory",
+      "description": "Non-functional requirements: latency per integration, availability targets, rate limit headroom"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+    }
+  }
+}

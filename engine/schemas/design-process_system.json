@@ -1,0 +1,36 @@
+{
+  "fields": {
+    "state_machine": {
+      "kind": "mandatory",
+      "description": "Workflow states, transitions, terminal states (completed/cancelled/abandoned), and guards per transition"
+    },
+    "persistence_strategy": {
+      "kind": "mandatory",
+      "description": "Durable execution approach: how in-flight workflow state survives restarts; state storage and recovery model"
+    },
+    "human_task_routing": {
+      "kind": "mandatory",
+      "description": "Inbox model, actor assignment rules, escalation path, and notification strategy for human steps"
+    },
+    "timeout_model": {
+      "kind": "mandatory",
+      "description": "Per-step timeout policy, what state the workflow enters on expiry, and escalation chain"
+    },
+    "audit_strategy": {
+      "kind": "mandatory",
+      "description": "What events are recorded, retention policy, consumers, and whether audit records survive workflow cancellation"
+    },
+    "testing_strategy": {
+      "kind": "mandatory",
+      "description": "State machine test approach, human task simulation strategy, and timeout/expiry testing"
+    },
+    "nfrs": {
+      "kind": "mandatory",
+      "description": "Non-functional requirements: task assignment latency, workflow completion SLA, audit record durability"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+    }
+  }
+}

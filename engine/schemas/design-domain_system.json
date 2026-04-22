@@ -1,0 +1,36 @@
+{
+  "fields": {
+    "layering_strategy": {
+      "kind": "mandatory",
+      "description": "Internal layering pattern per bounded context (hexagonal/clean/layered), CQRS decisions, and derivation rationale"
+    },
+    "aggregate_consistency": {
+      "kind": "mandatory",
+      "description": "Consistency model per aggregate: within-aggregate (always strong) and cross-aggregate events with targets"
+    },
+    "integration_patterns": {
+      "kind": "mandatory",
+      "description": "Cross-context integration decisions: relationship type, sync/async, API surface, ACL, consistency guarantee"
+    },
+    "storage": {
+      "kind": "mandatory",
+      "description": "Storage type per aggregate (relational/document/event-store/in-memory) with transaction boundary and rationale"
+    },
+    "cross_cutting": {
+      "kind": "mandatory",
+      "description": "Auth, error propagation, and observability decisions applied globally"
+    },
+    "testing_strategy": {
+      "kind": "mandatory",
+      "description": "Testing approach per architectural layer with what to test and what not to test"
+    },
+    "nfrs": {
+      "kind": "mandatory",
+      "description": "Non-functional requirements with measurable constraints, scope, and source"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+    }
+  }
+}

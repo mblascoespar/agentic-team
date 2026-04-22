@@ -1,0 +1,32 @@
+{
+  "fields": {
+    "migration_path": {
+      "kind": "mandatory",
+      "description": "Ordered migration steps with explicit gates: which steps depend on which, and what must be verified before the next step starts"
+    },
+    "compatibility_strategy": {
+      "kind": "mandatory",
+      "description": "How frozen contracts are preserved during migration: shim approach, dual-running period, and when the old behavior is retired"
+    },
+    "rollback_plan": {
+      "kind": "mandatory",
+      "description": "Per-step rollback approach: what state is left behind on failure, whether rollback is safe, and what triggers it"
+    },
+    "regression_guards": {
+      "kind": "mandatory",
+      "description": "Tests and verification checks that must pass before each gate: what they cover and what gaps remain"
+    },
+    "testing_strategy": {
+      "kind": "mandatory",
+      "description": "Testing approach for migration steps: how to verify behavioral equivalence before retiring old behavior"
+    },
+    "nfrs": {
+      "kind": "mandatory",
+      "description": "Non-functional requirements for the migration itself: downtime tolerance, migration window, data integrity guarantees"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+    }
+  }
+}

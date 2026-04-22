@@ -1,0 +1,60 @@
+{
+  "fields": {
+    "title": {
+      "kind": "mandatory",
+      "description": "Short product title"
+    },
+    "problem": {
+      "kind": "mandatory",
+      "description": "What pain exists and for whom"
+    },
+    "target_users": {
+      "kind": "mandatory",
+      "description": "Who the product is for"
+    },
+    "goals": {
+      "kind": "mandatory",
+      "description": "What the product must achieve"
+    },
+    "success_metrics": {
+      "kind": "mandatory",
+      "description": "Measurable outcomes with measurement methods"
+    },
+    "scope_in": {
+      "kind": "mandatory",
+      "description": "Features explicitly included in this version"
+    },
+    "scope_out": {
+      "kind": "optional",
+      "description": "Features explicitly excluded"
+    },
+    "features": {
+      "kind": "mandatory",
+      "description": "Feature list with user stories, priorities, and acceptance criteria"
+    },
+    "assumptions": {
+      "kind": "optional",
+      "description": "Assumptions the PRD rests on"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved questions to be addressed before approval"
+    },
+    "primary_archetype": {
+      "kind": "mandatory",
+      "description": "Primary classification of the system being built"
+    },
+    "secondary_archetype": {
+      "kind": "optional",
+      "description": "Secondary archetype when applicable (e.g. process_system alongside system_integration)"
+    },
+    "archetype_confidence": {
+      "kind": "optional",
+      "description": "Confidence in the archetype classification"
+    },
+    "archetype_reasoning": {
+      "kind": "mandatory",
+      "description": "Why this archetype was chosen"
+    }
+  }
+}

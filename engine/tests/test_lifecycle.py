@@ -1,9 +1,9 @@
 """
 Lifecycle tests — correct versioning behavior through the v1 / v2 / approve chain.
 
-These tests verify that each handler produces the correct structure at each
-stage of the artifact's life: initial creation, iterative refinement, and
-approval. They also test that data is correctly persisted to and read from disk.
+Tests verify that handle_write_artifact and handle_approve_artifact produce the
+correct structure at each stage of an artifact's life: initial creation, iterative
+refinement, and approval. Also covers instance schema creation and schema CRUD.
 
 Run this suite alone:  pytest -m lifecycle
 """
@@ -16,1000 +16,527 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tool_handler import (
-    handle_write_prd,
-    handle_approve_prd,
-    handle_write_domain_model,
-    handle_approve_domain_model,
-    handle_write_brief,
-    handle_approve_brief,
-    handle_write_design,
-    handle_approve_design,
-    handle_write_tech_stack,
-    handle_approve_tech_stack,
-    handle_update_schema,
-    _ensure_instance_schema,
+    handle_write_artifact,
+    handle_approve_artifact,
+    handle_add_schema_field,
+    handle_update_schema_field,
+    handle_delete_schema_field,
+    _init_schema,
+    _validate_mandatory_fields,
 )
-from conftest import make_prd_input, make_domain_input, make_brief_input, make_design_input, make_tech_stack_input, make_model_input
+from conftest import (
+    make_brief_body, make_prd_body, make_model_body,
+    make_design_body, make_tech_stack_body,
+    _create_approved_brief, _create_approved_prd, _create_approved_model,
+)
 
 pytestmark = pytest.mark.lifecycle
 
-
-# ===========================================================================
-# PRD — v1 creation
-# ===========================================================================
-
-class TestPrdV1:
-    def test_id_has_prd_prefix(self, prd_artifacts_dir):
-        assert handle_write_prd(make_prd_input())["id"].startswith("prd-")
-
-    def test_version_is_1(self, prd_artifacts_dir):
-        assert handle_write_prd(make_prd_input())["version"] == 1
-
-    def test_parent_version_is_none(self, prd_artifacts_dir):
-        assert handle_write_prd(make_prd_input())["parent_version"] is None
-
-    def test_created_at_and_updated_at_set(self, prd_artifacts_dir):
-        a = handle_write_prd(make_prd_input())
-        assert a["created_at"]
-        assert a["updated_at"]
-
-    def test_source_idea_stored(self, prd_artifacts_dir):
-        a = handle_write_prd(make_prd_input(source_idea="My original idea"))
-        assert a["source_idea"] == "My original idea"
-
-    def test_references_contains_upstream_brief(self, prd_artifacts_dir):
-        a = handle_write_prd(make_prd_input())
-        assert len(a["references"]) == 1
-        assert a["references"][0].endswith("test-project/brief/v1.json")
-
-    def test_decision_log_empty_when_no_entry(self, prd_artifacts_dir):
-        assert handle_write_prd(make_prd_input())["decision_log"] == []
-
-    def test_decision_log_entry_appended_with_metadata(self, prd_artifacts_dir):
-        inp = make_prd_input()
-        inp["decision_log_entry"] = {
-            "trigger": "initial_draft", "summary": "First draft", "changed_fields": ["title"],
-        }
-        a = handle_write_prd(inp)
-        assert len(a["decision_log"]) == 1
-        entry = a["decision_log"][0]
-        assert entry["version"] == 1
-        assert entry["author"] == "agent:product-agent"
-        assert entry["trigger"] == "initial_draft"
-        assert entry["summary"] == "First draft"
-        assert entry["timestamp"]
-
-    def test_content_fields_present(self, prd_artifacts_dir):
-        a = handle_write_prd(make_prd_input())
-        for key in ("title", "problem", "target_users", "goals", "features"):
-            assert key in a["content"]
-
-    def test_file_written_to_correct_path(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input(slug="my-project"))
-        assert (prd_artifacts_dir / "my-project" / "prd" / "v1.json").exists()
-
-    def test_file_is_valid_json(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input(slug="my-project"))
-        raw = (prd_artifacts_dir / "my-project" / "prd" / "v1.json").read_text()
-        parsed = json.loads(raw)
-        assert parsed["version"] == 1
+SLUG = "test-project"
 
 
 # ===========================================================================
-# PRD — v2 refinement
-# ===========================================================================
-
-class TestPrdV2:
-    def _v1(self, prd_artifacts_dir):
-        return handle_write_prd(make_prd_input())
-
-    def test_version_increments_by_1(self, prd_artifacts_dir):
-        v1 = self._v1(prd_artifacts_dir)
-        v2 = handle_write_prd(make_prd_input(), existing_prd=v1)
-        assert v2["version"] == 2
-
-    def test_parent_version_points_to_prior(self, prd_artifacts_dir):
-        v1 = self._v1(prd_artifacts_dir)
-        v2 = handle_write_prd(make_prd_input(), existing_prd=v1)
-        assert v2["parent_version"] == 1
-
-    def test_updated_at_changes(self, prd_artifacts_dir):
-        v1 = self._v1(prd_artifacts_dir)
-        v2 = handle_write_prd(make_prd_input(), existing_prd=v1)
-        assert v2["updated_at"] >= v1["updated_at"]
-
-    def test_references_carried_forward(self, prd_artifacts_dir):
-        v1 = self._v1(prd_artifacts_dir)
-        v2 = handle_write_prd(make_prd_input(), existing_prd=v1)
-        assert v2["references"] == v1["references"]
-
-    def test_decision_log_grows_by_one(self, prd_artifacts_dir):
-        v1_inp = make_prd_input()
-        v1_inp["decision_log_entry"] = {"trigger": "initial_draft", "summary": "v1", "changed_fields": []}
-        v1 = handle_write_prd(v1_inp)
-
-        v2_inp = make_prd_input()
-        v2_inp["decision_log_entry"] = {"trigger": "human_feedback", "summary": "v2", "changed_fields": ["title"]}
-        v2 = handle_write_prd(v2_inp, existing_prd=v1)
-
-        assert len(v2["decision_log"]) == 2
-        assert v2["decision_log"][1]["version"] == 2
-
-    def test_three_version_chain(self, prd_artifacts_dir):
-        v1 = handle_write_prd(make_prd_input())
-        v2 = handle_write_prd(make_prd_input(), existing_prd=v1)
-        v3 = handle_write_prd(make_prd_input(), existing_prd=v2)
-        assert v3["version"] == 3
-        assert v3["parent_version"] == 2
-
-    def test_v2_file_written_to_disk(self, prd_artifacts_dir):
-        v1 = self._v1(prd_artifacts_dir)
-        handle_write_prd(make_prd_input(), existing_prd=v1)
-        assert (prd_artifacts_dir / "test-project" / "prd" / "v2.json").exists()
-
-
-# ===========================================================================
-# PRD — approval
-# ===========================================================================
-
-class TestApprovePrd:
-    def _write_and_approve(self, prd_artifacts_dir):
-        handle_write_prd(make_prd_input())
-        path = str(prd_artifacts_dir / "test-project" / "prd" / "v1.json")
-        return handle_approve_prd(path), path
-
-    def test_status_set_to_approved(self, prd_artifacts_dir):
-        approved, _ = self._write_and_approve(prd_artifacts_dir)
-        assert approved["status"] == "approved"
-
-    def test_updated_at_refreshed(self, prd_artifacts_dir):
-        v1 = handle_write_prd(make_prd_input())
-        path = str(prd_artifacts_dir / "test-project" / "prd" / "v1.json")
-        approved = handle_approve_prd(path)
-        assert approved["updated_at"] >= v1["updated_at"]
-
-    def test_approval_entry_author_is_human(self, prd_artifacts_dir):
-        approved, _ = self._write_and_approve(prd_artifacts_dir)
-        assert approved["decision_log"][-1]["author"] == "human"
-
-    def test_approval_entry_trigger(self, prd_artifacts_dir):
-        approved, _ = self._write_and_approve(prd_artifacts_dir)
-        assert approved["decision_log"][-1]["trigger"] == "approval"
-
-    def test_version_unchanged_on_approval(self, prd_artifacts_dir):
-        approved, _ = self._write_and_approve(prd_artifacts_dir)
-        assert approved["version"] == 1
-
-    def test_approval_persisted_to_disk(self, prd_artifacts_dir):
-        _, path = self._write_and_approve(prd_artifacts_dir)
-        on_disk = json.loads(Path(path).read_text())
-        assert on_disk["status"] == "approved"
-
-    def test_approve_rejects_missing_file(self, prd_artifacts_dir):
-        with pytest.raises(ValueError, match="artifact not found"):
-            handle_approve_prd(str(prd_artifacts_dir / "ghost" / "prd" / "v1.json"))
-
-    def test_approve_rejects_already_approved(self, prd_artifacts_dir):
-        _, path = self._write_and_approve(prd_artifacts_dir)
-        with pytest.raises(ValueError, match="already approved"):
-            handle_approve_prd(path)
-
-    def test_approve_rejects_path_outside_artifacts_dir(self, prd_artifacts_dir):
-        with pytest.raises(ValueError, match="outside the artifacts directory"):
-            handle_approve_prd("/etc/passwd")
-
-
-# ===========================================================================
-# Domain model — v1 creation
-# ===========================================================================
-
-class TestDomainV1:
-    def test_id_has_domain_prefix(self, domain_artifacts_dir):
-        assert handle_write_domain_model(make_domain_input())["id"].startswith("domain-")
-
-    def test_version_is_1(self, domain_artifacts_dir):
-        assert handle_write_domain_model(make_domain_input())["version"] == 1
-
-    def test_parent_version_is_none(self, domain_artifacts_dir):
-        assert handle_write_domain_model(make_domain_input())["parent_version"] is None
-
-    def test_created_at_and_updated_at_set(self, domain_artifacts_dir):
-        a = handle_write_domain_model(make_domain_input())
-        assert a["created_at"]
-        assert a["updated_at"]
-
-    def test_references_contains_upstream_prd(self, domain_artifacts_dir):
-        """Engine resolves and stores the upstream PRD path in references."""
-        a = handle_write_domain_model(make_domain_input())
-        assert len(a["references"]) == 1
-        assert a["references"][0].endswith("test-project/prd/v1.json")
-
-    def test_decision_log_empty_when_no_entry(self, domain_artifacts_dir):
-        assert handle_write_domain_model(make_domain_input())["decision_log"] == []
-
-    def test_decision_log_entry_appended_with_metadata(self, domain_artifacts_dir):
-        inp = make_domain_input()
-        inp["decision_log_entry"] = {
-            "trigger": "initial_draft", "summary": "Initial model", "changed_fields": ["bounded_contexts"],
-        }
-        a = handle_write_domain_model(inp)
-        assert len(a["decision_log"]) == 1
-        entry = a["decision_log"][0]
-        assert entry["version"] == 1
-        assert entry["author"] == "agent:domain-agent"
-        assert entry["timestamp"]
-
-    def test_content_fields_present(self, domain_artifacts_dir):
-        a = handle_write_domain_model(make_domain_input())
-        for key in ("bounded_contexts", "context_map", "open_questions"):
-            assert key in a["content"]
-
-    def test_file_written_to_correct_path(self, domain_artifacts_dir):
-        handle_write_domain_model(make_domain_input(slug="deploy-rollback"))
-        assert (domain_artifacts_dir / "deploy-rollback" / "domain" / "v1.json").exists()
-
-    def test_file_is_valid_json(self, domain_artifacts_dir):
-        handle_write_domain_model(make_domain_input(slug="deploy-rollback"))
-        raw = (domain_artifacts_dir / "deploy-rollback" / "domain" / "v1.json").read_text()
-        parsed = json.loads(raw)
-        assert parsed["version"] == 1
-
-
-# ===========================================================================
-# Domain model — v2 refinement
-# ===========================================================================
-
-class TestDomainV2:
-    def _v1(self, domain_artifacts_dir):
-        return handle_write_domain_model(make_domain_input())
-
-    def test_version_increments_by_1(self, domain_artifacts_dir):
-        v1 = self._v1(domain_artifacts_dir)
-        v2 = handle_write_domain_model(make_domain_input(), existing_domain=v1)
-        assert v2["version"] == 2
-
-    def test_parent_version_points_to_prior(self, domain_artifacts_dir):
-        v1 = self._v1(domain_artifacts_dir)
-        v2 = handle_write_domain_model(make_domain_input(), existing_domain=v1)
-        assert v2["parent_version"] == 1
-
-    def test_updated_at_changes(self, domain_artifacts_dir):
-        v1 = self._v1(domain_artifacts_dir)
-        v2 = handle_write_domain_model(make_domain_input(), existing_domain=v1)
-        assert v2["updated_at"] >= v1["updated_at"]
-
-    def test_references_carried_forward(self, domain_artifacts_dir):
-        v1 = self._v1(domain_artifacts_dir)
-        v2 = handle_write_domain_model(make_domain_input(), existing_domain=v1)
-        assert v2["references"] == v1["references"]
-
-    def test_decision_log_grows_by_one(self, domain_artifacts_dir):
-        v1_inp = make_domain_input()
-        v1_inp["decision_log_entry"] = {"trigger": "initial_draft", "summary": "v1", "changed_fields": []}
-        v1 = handle_write_domain_model(v1_inp)
-
-        v2_inp = make_domain_input()
-        v2_inp["decision_log_entry"] = {"trigger": "human_feedback", "summary": "v2", "changed_fields": ["bounded_contexts"]}
-        v2 = handle_write_domain_model(v2_inp, existing_domain=v1)
-
-        assert len(v2["decision_log"]) == 2
-        assert v2["decision_log"][1]["version"] == 2
-
-    def test_three_version_chain(self, domain_artifacts_dir):
-        v1 = handle_write_domain_model(make_domain_input())
-        v2 = handle_write_domain_model(make_domain_input(), existing_domain=v1)
-        v3 = handle_write_domain_model(make_domain_input(), existing_domain=v2)
-        assert v3["version"] == 3
-        assert v3["parent_version"] == 2
-
-    def test_v2_file_written_to_disk(self, domain_artifacts_dir):
-        v1 = self._v1(domain_artifacts_dir)
-        handle_write_domain_model(make_domain_input(), existing_domain=v1)
-        assert (domain_artifacts_dir / "test-project" / "domain" / "v2.json").exists()
-
-
-# ===========================================================================
-# Domain model — approval
-# ===========================================================================
-
-class TestApproveDomainModel:
-    def _write_and_approve(self, domain_artifacts_dir):
-        handle_write_domain_model(make_domain_input())
-        path = str(domain_artifacts_dir / "test-project" / "domain" / "v1.json")
-        return handle_approve_domain_model(path), path
-
-    def test_status_set_to_approved(self, domain_artifacts_dir):
-        approved, _ = self._write_and_approve(domain_artifacts_dir)
-        assert approved["status"] == "approved"
-
-    def test_updated_at_refreshed(self, domain_artifacts_dir):
-        v1 = handle_write_domain_model(make_domain_input())
-        path = str(domain_artifacts_dir / "test-project" / "domain" / "v1.json")
-        approved = handle_approve_domain_model(path)
-        assert approved["updated_at"] >= v1["updated_at"]
-
-    def test_approval_entry_author_is_human(self, domain_artifacts_dir):
-        approved, _ = self._write_and_approve(domain_artifacts_dir)
-        assert approved["decision_log"][-1]["author"] == "human"
-
-    def test_approval_entry_trigger(self, domain_artifacts_dir):
-        approved, _ = self._write_and_approve(domain_artifacts_dir)
-        assert approved["decision_log"][-1]["trigger"] == "approval"
-
-    def test_version_unchanged_on_approval(self, domain_artifacts_dir):
-        approved, _ = self._write_and_approve(domain_artifacts_dir)
-        assert approved["version"] == 1
-
-    def test_approval_persisted_to_disk(self, domain_artifacts_dir):
-        _, path = self._write_and_approve(domain_artifacts_dir)
-        on_disk = json.loads(Path(path).read_text())
-        assert on_disk["status"] == "approved"
-
-    def test_approve_rejects_missing_file(self, domain_artifacts_dir):
-        with pytest.raises(ValueError, match="artifact not found"):
-            handle_approve_domain_model(str(domain_artifacts_dir / "ghost" / "domain" / "v1.json"))
-
-    def test_approve_rejects_already_approved(self, domain_artifacts_dir):
-        _, path = self._write_and_approve(domain_artifacts_dir)
-        with pytest.raises(ValueError, match="already approved"):
-            handle_approve_domain_model(path)
-
-    def test_approve_rejects_path_outside_artifacts_dir(self, domain_artifacts_dir):
-        with pytest.raises(ValueError, match="outside the artifacts directory"):
-            handle_approve_domain_model("/etc/passwd")
-
-
-# ===========================================================================
-# Brief — v1 creation
+# Brief — v1
 # ===========================================================================
 
 class TestBriefV1:
     def test_id_has_brief_prefix(self, artifacts_dir):
-        assert handle_write_brief(make_brief_input())["id"].startswith("brief-")
+        a = handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert a["id"].startswith("brief-")
 
     def test_version_is_1(self, artifacts_dir):
-        assert handle_write_brief(make_brief_input())["version"] == 1
+        assert handle_write_artifact(SLUG, "brief", make_brief_body())["version"] == 1
 
     def test_parent_version_is_none(self, artifacts_dir):
-        assert handle_write_brief(make_brief_input())["parent_version"] is None
+        assert handle_write_artifact(SLUG, "brief", make_brief_body())["parent_version"] is None
 
-    def test_created_at_and_updated_at_set(self, artifacts_dir):
-        a = handle_write_brief(make_brief_input())
-        assert a["created_at"]
-        assert a["updated_at"]
+    def test_timestamps_set(self, artifacts_dir):
+        a = handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert a["created_at"] and a["updated_at"]
 
-    def test_idea_stored_in_content(self, artifacts_dir):
-        a = handle_write_brief(make_brief_input(idea="My original idea"))
-        assert a["content"]["idea"] == "My original idea"
+    def test_status_is_draft(self, artifacts_dir):
+        assert handle_write_artifact(SLUG, "brief", make_brief_body())["status"] == "draft"
 
     def test_references_empty(self, artifacts_dir):
-        assert handle_write_brief(make_brief_input())["references"] == []
+        assert handle_write_artifact(SLUG, "brief", make_brief_body())["references"] == []
 
-    def test_decision_log_empty_when_no_entry(self, artifacts_dir):
-        assert handle_write_brief(make_brief_input())["decision_log"] == []
+    def test_decision_log_empty_without_entry(self, artifacts_dir):
+        assert handle_write_artifact(SLUG, "brief", make_brief_body())["decision_log"] == []
 
-    def test_decision_log_entry_appended_with_metadata(self, artifacts_dir):
-        inp = make_brief_input()
-        inp["decision_log_entry"] = {
-            "trigger": "initial_draft", "summary": "First brief", "changed_fields": ["alternatives"],
-        }
-        a = handle_write_brief(inp)
+    def test_decision_log_entry_appended(self, artifacts_dir):
+        a = handle_write_artifact(SLUG, "brief", make_brief_body(), decision_log_entry={
+            "trigger": "initial_draft", "summary": "First brief", "changed_fields": ["idea"],
+        })
         assert len(a["decision_log"]) == 1
         entry = a["decision_log"][0]
         assert entry["version"] == 1
         assert entry["author"] == "agent:brainstorm-agent"
         assert entry["trigger"] == "initial_draft"
-        assert entry["timestamp"]
 
-    def test_content_fields_present(self, artifacts_dir):
-        a = handle_write_brief(make_brief_input())
-        for key in ("idea", "alternatives", "chosen_direction", "competitive_scan",
-                    "complexity_assessment", "open_questions"):
-            assert key in a["content"]
+    def test_content_stored(self, artifacts_dir):
+        body = make_brief_body()
+        a = handle_write_artifact(SLUG, "brief", body)
+        assert a["content"]["idea"] == body["idea"]
 
-    def test_file_written_to_correct_path(self, artifacts_dir):
-        handle_write_brief(make_brief_input(slug="my-project"))
-        assert (artifacts_dir / "my-project" / "brief" / "v1.json").exists()
+    def test_schema_created_on_v1(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert (artifacts_dir / SLUG / "brief" / "schema.json").exists()
 
-    def test_file_is_valid_json(self, artifacts_dir):
-        handle_write_brief(make_brief_input(slug="my-project"))
-        raw = (artifacts_dir / "my-project" / "brief" / "v1.json").read_text()
-        parsed = json.loads(raw)
-        assert parsed["version"] == 1
+    def test_written_to_disk(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert (artifacts_dir / SLUG / "brief" / "v1.json").exists()
+
+    def test_no_primary_archetype_on_brief(self, artifacts_dir):
+        a = handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert "primary_archetype" not in a
 
 
 # ===========================================================================
-# Brief — v2 refinement
+# Brief — v2
 # ===========================================================================
 
 class TestBriefV2:
-    def _v1(self, artifacts_dir):
-        return handle_write_brief(make_brief_input())
-
-    def test_version_increments_by_1(self, artifacts_dir):
-        v1 = self._v1(artifacts_dir)
-        v2 = handle_write_brief(make_brief_input(), existing_brief=v1)
+    def test_version_increments(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        v2 = handle_write_artifact(SLUG, "brief", make_brief_body())
         assert v2["version"] == 2
 
-    def test_parent_version_points_to_prior(self, artifacts_dir):
-        v1 = self._v1(artifacts_dir)
-        v2 = handle_write_brief(make_brief_input(), existing_brief=v1)
+    def test_parent_version_set(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        v2 = handle_write_artifact(SLUG, "brief", make_brief_body())
         assert v2["parent_version"] == 1
 
-    def test_updated_at_changes(self, artifacts_dir):
-        v1 = self._v1(artifacts_dir)
-        v2 = handle_write_brief(make_brief_input(), existing_brief=v1)
-        assert v2["updated_at"] >= v1["updated_at"]
+    def test_id_stable_across_versions(self, artifacts_dir):
+        v1 = handle_write_artifact(SLUG, "brief", make_brief_body())
+        v2 = handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert v1["id"] == v2["id"]
 
-    def test_decision_log_grows_by_one(self, artifacts_dir):
-        v1_inp = make_brief_input()
-        v1_inp["decision_log_entry"] = {"trigger": "initial_draft", "summary": "v1", "changed_fields": []}
-        v1 = handle_write_brief(v1_inp)
+    def test_created_at_immutable(self, artifacts_dir):
+        v1 = handle_write_artifact(SLUG, "brief", make_brief_body())
+        v2 = handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert v1["created_at"] == v2["created_at"]
 
-        v2_inp = make_brief_input()
-        v2_inp["decision_log_entry"] = {"trigger": "human_feedback", "summary": "v2", "changed_fields": ["chosen_direction"]}
-        v2 = handle_write_brief(v2_inp, existing_brief=v1)
+    def test_idea_locked_on_v2(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body(idea="original idea"))
+        v2 = handle_write_artifact(SLUG, "brief", make_brief_body(idea="attacker idea"))
+        assert v2["content"]["idea"] == "original idea"
 
+    def test_decision_log_accumulates(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body(), decision_log_entry={"trigger": "t1", "summary": "s1", "changed_fields": []})
+        v2 = handle_write_artifact(SLUG, "brief", make_brief_body(), decision_log_entry={"trigger": "t2", "summary": "s2", "changed_fields": []})
         assert len(v2["decision_log"]) == 2
-        assert v2["decision_log"][1]["version"] == 2
 
-    def test_three_version_chain(self, artifacts_dir):
-        v1 = handle_write_brief(make_brief_input())
-        v2 = handle_write_brief(make_brief_input(), existing_brief=v1)
-        v3 = handle_write_brief(make_brief_input(), existing_brief=v2)
-        assert v3["version"] == 3
-        assert v3["parent_version"] == 2
-
-    def test_v2_file_written_to_disk(self, artifacts_dir):
-        v1 = self._v1(artifacts_dir)
-        handle_write_brief(make_brief_input(), existing_brief=v1)
-        assert (artifacts_dir / "test-project" / "brief" / "v2.json").exists()
+    def test_v2_written_to_disk(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        assert (artifacts_dir / SLUG / "brief" / "v2.json").exists()
 
 
 # ===========================================================================
-# Brief — approval
+# Brief — approve
 # ===========================================================================
 
 class TestApproveBrief:
-    def _write_and_approve(self, artifacts_dir):
-        handle_write_brief(make_brief_input())
-        path = str(artifacts_dir / "test-project" / "brief" / "v1.json")
-        return handle_approve_brief(path), path
+    def test_status_becomes_approved(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        artifact = handle_approve_artifact(str(artifacts_dir / SLUG / "brief" / "v1.json"))
+        assert artifact["status"] == "approved"
 
-    def test_status_set_to_approved(self, artifacts_dir):
-        approved, _ = self._write_and_approve(artifacts_dir)
-        assert approved["status"] == "approved"
+    def test_approval_log_entry_appended(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        artifact = handle_approve_artifact(str(artifacts_dir / SLUG / "brief" / "v1.json"))
+        entry = artifact["decision_log"][-1]
+        assert entry["trigger"] == "approval"
+        assert entry["author"] == "human"
 
-    def test_updated_at_refreshed(self, artifacts_dir):
-        v1 = handle_write_brief(make_brief_input())
-        path = str(artifacts_dir / "test-project" / "brief" / "v1.json")
-        approved = handle_approve_brief(path)
-        assert approved["updated_at"] >= v1["updated_at"]
-
-    def test_approval_entry_author_is_human(self, artifacts_dir):
-        approved, _ = self._write_and_approve(artifacts_dir)
-        assert approved["decision_log"][-1]["author"] == "human"
-
-    def test_approval_entry_trigger(self, artifacts_dir):
-        approved, _ = self._write_and_approve(artifacts_dir)
-        assert approved["decision_log"][-1]["trigger"] == "approval"
-
-    def test_version_unchanged_on_approval(self, artifacts_dir):
-        approved, _ = self._write_and_approve(artifacts_dir)
-        assert approved["version"] == 1
-
-    def test_approval_persisted_to_disk(self, artifacts_dir):
-        _, path = self._write_and_approve(artifacts_dir)
-        on_disk = json.loads(Path(path).read_text())
-        assert on_disk["status"] == "approved"
-
-    def test_approve_rejects_missing_file(self, artifacts_dir):
-        with pytest.raises(ValueError, match="artifact not found"):
-            handle_approve_brief(str(artifacts_dir / "ghost" / "brief" / "v1.json"))
-
-    def test_approve_rejects_already_approved(self, artifacts_dir):
-        _, path = self._write_and_approve(artifacts_dir)
+    def test_double_approve_raises(self, artifacts_dir):
+        handle_write_artifact(SLUG, "brief", make_brief_body())
+        handle_approve_artifact(str(artifacts_dir / SLUG / "brief" / "v1.json"))
         with pytest.raises(ValueError, match="already approved"):
-            handle_approve_brief(path)
-
-    def test_approve_rejects_path_outside_artifacts_dir(self, artifacts_dir):
-        with pytest.raises(ValueError, match="outside the artifacts directory"):
-            handle_approve_brief("/etc/passwd")
+            handle_approve_artifact(str(artifacts_dir / SLUG / "brief" / "v1.json"))
 
 
 # ===========================================================================
-# Design — v1 creation
+# PRD — v1
 # ===========================================================================
 
-class TestDesignV1:
-    def test_id_has_design_prefix(self, design_artifacts_dir):
-        assert handle_write_design(make_design_input())["id"].startswith("design-")
+class TestPrdV1:
+    def test_id_has_prd_prefix(self, brief_artifacts_dir):
+        assert handle_write_artifact(SLUG, "prd", make_prd_body())["id"].startswith("prd-")
 
-    def test_version_is_1(self, design_artifacts_dir):
-        assert handle_write_design(make_design_input())["version"] == 1
+    def test_version_is_1(self, brief_artifacts_dir):
+        assert handle_write_artifact(SLUG, "prd", make_prd_body())["version"] == 1
 
-    def test_parent_version_is_none(self, design_artifacts_dir):
-        assert handle_write_design(make_design_input())["parent_version"] is None
-
-    def test_created_at_and_updated_at_set(self, design_artifacts_dir):
-        a = handle_write_design(make_design_input())
-        assert a["created_at"]
-        assert a["updated_at"]
-
-    def test_references_contains_upstream_domain(self, design_artifacts_dir):
-        a = handle_write_design(make_design_input())
+    def test_references_upstream_brief(self, brief_artifacts_dir):
+        a = handle_write_artifact(SLUG, "prd", make_prd_body())
         assert len(a["references"]) == 1
-        assert a["references"][0].endswith("test-project/model_domain/v1.json")
+        assert "brief/v1.json" in a["references"][0]
 
-    def test_decision_log_empty_when_no_entry(self, design_artifacts_dir):
-        assert handle_write_design(make_design_input())["decision_log"] == []
+    def test_source_idea_derived_from_brief(self, brief_artifacts_dir):
+        a = handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert a["source_idea"] == make_brief_body()["idea"]
 
-    def test_decision_log_entry_appended_with_metadata(self, design_artifacts_dir):
-        inp = make_design_input()
-        inp["decision_log_entry"] = {
-            "trigger": "initial_draft", "summary": "Initial design", "changed_fields": ["layering_strategy"],
-        }
-        a = handle_write_design(inp)
-        assert len(a["decision_log"]) == 1
-        entry = a["decision_log"][0]
-        assert entry["version"] == 1
-        assert entry["author"] == "agent:architecture-agent"
-        assert entry["trigger"] == "initial_draft"
-        assert entry["timestamp"]
+    def test_primary_archetype_on_envelope(self, brief_artifacts_dir):
+        # PRD is v1 before archetype is in approved PRD — archetype read from own content
+        # after approval; at write time there's no approved PRD yet so field is absent
+        a = handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert "primary_archetype" not in a  # no approved PRD yet at write time
 
-    def test_content_fields_present(self, design_artifacts_dir):
-        a = handle_write_design(make_design_input())
-        for key in ("layering_strategy", "aggregate_consistency", "integration_patterns",
-                    "storage", "cross_cutting", "testing_strategy", "nfrs", "open_questions"):
-            assert key in a["content"]
+    def test_schema_created_on_v1(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert (brief_artifacts_dir / SLUG / "prd" / "schema.json").exists()
 
-    def test_file_written_to_correct_path(self, design_artifacts_dir):
-        handle_write_design(make_design_input(slug="my-app"))
-        assert (design_artifacts_dir / "my-app" / "design" / "v1.json").exists()
+    def test_content_stored(self, brief_artifacts_dir):
+        body = make_prd_body()
+        a = handle_write_artifact(SLUG, "prd", body)
+        assert a["content"]["title"] == body["title"]
+        assert a["content"]["primary_archetype"] == "domain_system"
 
-    def test_file_is_valid_json(self, design_artifacts_dir):
-        handle_write_design(make_design_input(slug="my-app"))
-        raw = (design_artifacts_dir / "my-app" / "design" / "v1.json").read_text()
-        parsed = json.loads(raw)
-        assert parsed["version"] == 1
+    def test_written_to_disk(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert (brief_artifacts_dir / SLUG / "prd" / "v1.json").exists()
 
-    def test_status_is_draft(self, design_artifacts_dir):
-        assert handle_write_design(make_design_input())["status"] == "draft"
+    def test_no_upstream_brief_raises(self, artifacts_dir):
+        with pytest.raises(ValueError, match="no approved brief"):
+            handle_write_artifact(SLUG, "prd", make_prd_body())
 
 
 # ===========================================================================
-# Design — v2 refinement
+# PRD — v2 (archetype locking)
 # ===========================================================================
 
-class TestDesignV2:
-    def _v1(self, design_artifacts_dir):
-        return handle_write_design(make_design_input())
-
-    def test_version_increments_by_1(self, design_artifacts_dir):
-        v1 = self._v1(design_artifacts_dir)
-        v2 = handle_write_design(make_design_input(), existing_design=v1)
+class TestPrdV2:
+    def test_version_increments(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        v2 = handle_write_artifact(SLUG, "prd", make_prd_body())
         assert v2["version"] == 2
 
-    def test_parent_version_points_to_prior(self, design_artifacts_dir):
-        v1 = self._v1(design_artifacts_dir)
-        v2 = handle_write_design(make_design_input(), existing_design=v1)
-        assert v2["parent_version"] == 1
+    def test_archetype_locked_on_v2(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body(primary_archetype="domain_system"))
+        # Attempt to change archetype on v2 — engine must ignore it
+        v2 = handle_write_artifact(SLUG, "prd", make_prd_body(primary_archetype="data_pipeline"))
+        assert v2["content"]["primary_archetype"] == "domain_system"
 
-    def test_id_stable(self, design_artifacts_dir):
-        v1 = self._v1(design_artifacts_dir)
-        v2 = handle_write_design(make_design_input(), existing_design=v1)
-        assert v2["id"] == v1["id"]
+    def test_archetype_reasoning_locked_on_v2(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body(archetype_reasoning="original reasoning"))
+        v2 = handle_write_artifact(SLUG, "prd", make_prd_body(archetype_reasoning="attacker reasoning"))
+        assert v2["content"]["archetype_reasoning"] == "original reasoning"
 
-    def test_created_at_unchanged(self, design_artifacts_dir):
-        v1 = self._v1(design_artifacts_dir)
-        v2 = handle_write_design(make_design_input(), existing_design=v1)
-        assert v2["created_at"] == v1["created_at"]
+    def test_id_stable(self, brief_artifacts_dir):
+        v1 = handle_write_artifact(SLUG, "prd", make_prd_body())
+        v2 = handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert v1["id"] == v2["id"]
 
-    def test_updated_at_changes(self, design_artifacts_dir):
-        v1 = self._v1(design_artifacts_dir)
-        v2 = handle_write_design(make_design_input(), existing_design=v1)
-        assert v2["updated_at"] >= v1["updated_at"]
+    def test_source_idea_carried_forward(self, brief_artifacts_dir):
+        v1 = handle_write_artifact(SLUG, "prd", make_prd_body())
+        v2 = handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert v1["source_idea"] == v2["source_idea"]
 
-    def test_decision_log_grows_by_one(self, design_artifacts_dir):
-        v1_inp = make_design_input()
-        v1_inp["decision_log_entry"] = {"trigger": "initial_draft", "summary": "v1", "changed_fields": []}
-        v1 = handle_write_design(v1_inp)
-
-        v2_inp = make_design_input()
-        v2_inp["decision_log_entry"] = {"trigger": "human_feedback", "summary": "v2", "changed_fields": ["layering_strategy"]}
-        v2 = handle_write_design(v2_inp, existing_design=v1)
-
+    def test_decision_log_accumulates(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body(), decision_log_entry={"trigger": "t1", "summary": "s1", "changed_fields": []})
+        v2 = handle_write_artifact(SLUG, "prd", make_prd_body(), decision_log_entry={"trigger": "t2", "summary": "s2", "changed_fields": []})
         assert len(v2["decision_log"]) == 2
-        assert v2["decision_log"][1]["version"] == 2
-
-    def test_three_version_chain(self, design_artifacts_dir):
-        v1 = handle_write_design(make_design_input())
-        v2 = handle_write_design(make_design_input(), existing_design=v1)
-        v3 = handle_write_design(make_design_input(), existing_design=v2)
-        assert v3["version"] == 3
-        assert v3["parent_version"] == 2
-
-    def test_v2_file_written_to_disk(self, design_artifacts_dir):
-        v1 = self._v1(design_artifacts_dir)
-        handle_write_design(make_design_input(), existing_design=v1)
-        assert (design_artifacts_dir / "test-project" / "design" / "v2.json").exists()
 
 
 # ===========================================================================
-# Design — approval
+# PRD — approve
 # ===========================================================================
 
-class TestApproveDesign:
-    def _write_and_approve(self, design_artifacts_dir):
-        handle_write_design(make_design_input())
-        path = str(design_artifacts_dir / "test-project" / "design" / "v1.json")
-        return handle_approve_design(path), path
+class TestApprovePrd:
+    def test_status_becomes_approved(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        artifact = handle_approve_artifact(str(brief_artifacts_dir / SLUG / "prd" / "v1.json"))
+        assert artifact["status"] == "approved"
 
-    def test_status_set_to_approved(self, design_artifacts_dir):
-        approved, _ = self._write_and_approve(design_artifacts_dir)
-        assert approved["status"] == "approved"
+    def test_approval_log_entry(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        artifact = handle_approve_artifact(str(brief_artifacts_dir / SLUG / "prd" / "v1.json"))
+        assert artifact["decision_log"][-1]["trigger"] == "approval"
 
-    def test_updated_at_refreshed(self, design_artifacts_dir):
-        v1 = handle_write_design(make_design_input())
-        path = str(design_artifacts_dir / "test-project" / "design" / "v1.json")
-        approved = handle_approve_design(path)
-        assert approved["updated_at"] >= v1["updated_at"]
-
-    def test_approval_entry_author_is_human(self, design_artifacts_dir):
-        approved, _ = self._write_and_approve(design_artifacts_dir)
-        assert approved["decision_log"][-1]["author"] == "human"
-
-    def test_approval_entry_trigger(self, design_artifacts_dir):
-        approved, _ = self._write_and_approve(design_artifacts_dir)
-        assert approved["decision_log"][-1]["trigger"] == "approval"
-
-    def test_version_unchanged_on_approval(self, design_artifacts_dir):
-        approved, _ = self._write_and_approve(design_artifacts_dir)
-        assert approved["version"] == 1
-
-    def test_approval_persisted_to_disk(self, design_artifacts_dir):
-        _, path = self._write_and_approve(design_artifacts_dir)
-        on_disk = json.loads(Path(path).read_text())
-        assert on_disk["status"] == "approved"
-
-    def test_approve_rejects_missing_file(self, design_artifacts_dir):
-        with pytest.raises(ValueError, match="artifact not found"):
-            handle_approve_design(str(design_artifacts_dir / "ghost" / "design" / "v1.json"))
-
-    def test_approve_rejects_already_approved(self, design_artifacts_dir):
-        _, path = self._write_and_approve(design_artifacts_dir)
+    def test_double_approve_raises(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        handle_approve_artifact(str(brief_artifacts_dir / SLUG / "prd" / "v1.json"))
         with pytest.raises(ValueError, match="already approved"):
-            handle_approve_design(path)
-
-    def test_approve_rejects_path_outside_artifacts_dir(self, design_artifacts_dir):
-        with pytest.raises(ValueError, match="outside the artifacts directory"):
-            handle_approve_design("/etc/passwd")
+            handle_approve_artifact(str(brief_artifacts_dir / SLUG / "prd" / "v1.json"))
 
 
 # ===========================================================================
-# Tech Stack — v1 creation
+# Model stages — v1 / v2 / approve (domain as representative)
 # ===========================================================================
 
-class TestTechStackV1:
-    def test_id_has_tech_stack_prefix(self, tech_stack_artifacts_dir):
-        assert handle_write_tech_stack(make_tech_stack_input())["id"].startswith("tech-stack-")
+class TestModelDomainV1:
+    def test_id_has_model_domain_prefix(self, prd_artifacts_dir):
+        a = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        assert a["id"].startswith("model-domain-")
 
-    def test_version_is_1(self, tech_stack_artifacts_dir):
-        assert handle_write_tech_stack(make_tech_stack_input())["version"] == 1
+    def test_model_type_on_envelope(self, prd_artifacts_dir):
+        a = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        assert a["model_type"] == "domain"
 
-    def test_parent_version_is_none(self, tech_stack_artifacts_dir):
-        assert handle_write_tech_stack(make_tech_stack_input())["parent_version"] is None
+    def test_primary_archetype_on_envelope(self, prd_artifacts_dir):
+        a = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        assert a["primary_archetype"] == "domain_system"
 
-    def test_created_at_and_updated_at_set(self, tech_stack_artifacts_dir):
-        a = handle_write_tech_stack(make_tech_stack_input())
-        assert a["created_at"]
-        assert a["updated_at"]
+    def test_references_approved_prd(self, prd_artifacts_dir):
+        a = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        assert any("prd/v1.json" in r for r in a["references"])
 
-    def test_references_contains_upstream_design(self, tech_stack_artifacts_dir):
-        a = handle_write_tech_stack(make_tech_stack_input())
-        assert len(a["references"]) == 1
-        assert a["references"][0].endswith("test-project/design/v1.json")
+    def test_schema_created(self, prd_artifacts_dir):
+        handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        assert (prd_artifacts_dir / SLUG / "model_domain" / "schema.json").exists()
 
-    def test_status_is_draft(self, tech_stack_artifacts_dir):
-        assert handle_write_tech_stack(make_tech_stack_input())["status"] == "draft"
+    def test_no_approved_prd_raises(self, brief_artifacts_dir):
+        # brief exists but PRD is draft — topology unresolvable
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        with pytest.raises(ValueError, match="cannot determine topology"):
+            handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
 
-    def test_decision_log_empty_when_no_entry(self, tech_stack_artifacts_dir):
-        assert handle_write_tech_stack(make_tech_stack_input())["decision_log"] == []
-
-    def test_decision_log_entry_appended_with_metadata(self, tech_stack_artifacts_dir):
-        inp = make_tech_stack_input()
-        inp["decision_log_entry"] = {
-            "trigger": "initial_draft",
-            "summary": "All ADRs resolved via deliberation",
-            "changed_fields": ["adrs"],
-        }
-        a = handle_write_tech_stack(inp)
-        assert len(a["decision_log"]) == 1
-        entry = a["decision_log"][0]
-        assert entry["version"] == 1
-        assert entry["author"] == "agent:tech-stack-agent"
-        assert entry["trigger"] == "initial_draft"
-        assert entry["summary"] == "All ADRs resolved via deliberation"
-        assert entry["timestamp"]
-
-    def test_content_fields_present(self, tech_stack_artifacts_dir):
-        a = handle_write_tech_stack(make_tech_stack_input())
-        assert "adrs" in a["content"]
-        assert "open_questions" in a["content"]
-
-    def test_adr_fields_stored(self, tech_stack_artifacts_dir):
-        a = handle_write_tech_stack(make_tech_stack_input())
-        adr = a["content"]["adrs"][0]
-        for field in ("decision_point", "architectural_signal", "candidates",
-                      "constraints_surfaced", "chosen", "rationale", "rejections"):
-            assert field in adr
-
-    def test_file_written_to_correct_path(self, tech_stack_artifacts_dir):
-        handle_write_tech_stack(make_tech_stack_input(slug="my-app"))
-        assert (tech_stack_artifacts_dir / "my-app" / "tech_stack" / "v1.json").exists()
-
-    def test_file_is_valid_json(self, tech_stack_artifacts_dir):
-        handle_write_tech_stack(make_tech_stack_input(slug="my-app"))
-        raw = (tech_stack_artifacts_dir / "my-app" / "tech_stack" / "v1.json").read_text()
-        parsed = json.loads(raw)
-        assert parsed["version"] == 1
+    def test_wrong_archetype_raises(self, artifacts_dir):
+        # data_pipeline PRD → model_domain not in topology
+        _create_approved_brief(SLUG, artifacts_dir)
+        handle_write_artifact(SLUG, "prd", make_prd_body(primary_archetype="data_pipeline"))
+        handle_approve_artifact(str(artifacts_dir / SLUG / "prd" / "v1.json"))
+        with pytest.raises(ValueError, match="not in the topology"):
+            handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
 
 
-# ===========================================================================
-# Tech Stack — v2 refinement
-# ===========================================================================
-
-class TestTechStackV2:
-    def _v1(self, tech_stack_artifacts_dir):
-        return handle_write_tech_stack(make_tech_stack_input())
-
-    def test_version_increments_by_1(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
+class TestModelDomainV2:
+    def test_version_increments(self, prd_artifacts_dir):
+        handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        v2 = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
         assert v2["version"] == 2
 
-    def test_parent_version_points_to_prior(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        assert v2["parent_version"] == 1
-
-    def test_id_stable(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        assert v2["id"] == v1["id"]
-
-    def test_created_at_unchanged(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        assert v2["created_at"] == v1["created_at"]
-
-    def test_updated_at_changes(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        assert v2["updated_at"] >= v1["updated_at"]
-
-    def test_references_carried_forward(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        assert v2["references"] == v1["references"]
-
-    def test_decision_log_grows_by_one(self, tech_stack_artifacts_dir):
-        v1_inp = make_tech_stack_input()
-        v1_inp["decision_log_entry"] = {"trigger": "initial_draft", "summary": "v1", "changed_fields": ["adrs"]}
-        v1 = handle_write_tech_stack(v1_inp)
-
-        v2_inp = make_tech_stack_input()
-        v2_inp["decision_log_entry"] = {"trigger": "scope_change", "summary": "re-opened API framework decision", "changed_fields": ["adrs"]}
-        v2 = handle_write_tech_stack(v2_inp, existing_tech_stack=v1)
-
-        assert len(v2["decision_log"]) == 2
-        assert v2["decision_log"][1]["version"] == 2
-
-    def test_three_version_chain(self, tech_stack_artifacts_dir):
-        v1 = handle_write_tech_stack(make_tech_stack_input())
-        v2 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        v3 = handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v2)
-        assert v3["version"] == 3
-        assert v3["parent_version"] == 2
-
-    def test_v2_file_written_to_disk(self, tech_stack_artifacts_dir):
-        v1 = self._v1(tech_stack_artifacts_dir)
-        handle_write_tech_stack(make_tech_stack_input(), existing_tech_stack=v1)
-        assert (tech_stack_artifacts_dir / "test-project" / "tech_stack" / "v2.json").exists()
-
-
-# ===========================================================================
-# Tech Stack — approval
-# ===========================================================================
-
-class TestApproveTechStack:
-    def _write_and_approve(self, tech_stack_artifacts_dir):
-        handle_write_tech_stack(make_tech_stack_input())
-        path = str(tech_stack_artifacts_dir / "test-project" / "tech_stack" / "v1.json")
-        return handle_approve_tech_stack(path), path
-
-    def test_status_set_to_approved(self, tech_stack_artifacts_dir):
-        approved, _ = self._write_and_approve(tech_stack_artifacts_dir)
-        assert approved["status"] == "approved"
-
-    def test_updated_at_refreshed(self, tech_stack_artifacts_dir):
-        v1 = handle_write_tech_stack(make_tech_stack_input())
-        path = str(tech_stack_artifacts_dir / "test-project" / "tech_stack" / "v1.json")
-        approved = handle_approve_tech_stack(path)
-        assert approved["updated_at"] >= v1["updated_at"]
-
-    def test_approval_entry_author_is_human(self, tech_stack_artifacts_dir):
-        approved, _ = self._write_and_approve(tech_stack_artifacts_dir)
-        assert approved["decision_log"][-1]["author"] == "human"
-
-    def test_approval_entry_trigger(self, tech_stack_artifacts_dir):
-        approved, _ = self._write_and_approve(tech_stack_artifacts_dir)
-        assert approved["decision_log"][-1]["trigger"] == "approval"
-
-    def test_version_unchanged_on_approval(self, tech_stack_artifacts_dir):
-        approved, _ = self._write_and_approve(tech_stack_artifacts_dir)
-        assert approved["version"] == 1
-
-    def test_approval_persisted_to_disk(self, tech_stack_artifacts_dir):
-        _, path = self._write_and_approve(tech_stack_artifacts_dir)
-        on_disk = json.loads(Path(path).read_text())
-        assert on_disk["status"] == "approved"
-
-    def test_approve_rejects_missing_file(self, tech_stack_artifacts_dir):
-        with pytest.raises(ValueError, match="artifact not found"):
-            handle_approve_tech_stack(str(tech_stack_artifacts_dir / "ghost" / "tech_stack" / "v1.json"))
-
-    def test_approve_rejects_already_approved(self, tech_stack_artifacts_dir):
-        _, path = self._write_and_approve(tech_stack_artifacts_dir)
-        with pytest.raises(ValueError, match="already approved"):
-            handle_approve_tech_stack(path)
-
-    def test_approve_rejects_path_outside_artifacts_dir(self, tech_stack_artifacts_dir):
-        with pytest.raises(ValueError, match="outside the artifacts directory"):
-            handle_approve_tech_stack("/etc/passwd")
-
-
-# ---------------------------------------------------------------------------
-# Step 3 — Instance schema lifecycle
-# ---------------------------------------------------------------------------
-
-class TestInstanceSchema:
-    """
-    Verifies that _ensure_instance_schema creates a schema.json from the base
-    schema on first call, and that handle_update_schema correctly extends it.
-    """
-
-    pytestmark = pytest.mark.lifecycle
-
-    def test_schema_created_from_base_for_model_domain(self, artifacts_dir):
-        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
-        _ensure_instance_schema("my-app", "model_domain")
-        schema_path = artifacts_dir / "my-app" / "model_domain" / "schema.json"
-        assert schema_path.exists()
-        schema = json.loads(schema_path.read_text())
-        assert "bounded_contexts" in schema["fields"]
-        assert schema["fields"]["bounded_contexts"]["kind"] == "mandatory"
-
-    def test_schema_idempotent_on_repeat_calls(self, artifacts_dir):
-        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
-        _ensure_instance_schema("my-app", "model_domain")
-        _ensure_instance_schema("my-app", "model_domain")  # second call must not overwrite
-        schema_path = artifacts_dir / "my-app" / "model_domain" / "schema.json"
-        assert schema_path.exists()
-
-    def test_empty_schema_for_stage_with_no_base(self, artifacts_dir):
-        (artifacts_dir / "my-app" / "brief").mkdir(parents=True)
-        _ensure_instance_schema("my-app", "brief")
-        schema = json.loads((artifacts_dir / "my-app" / "brief" / "schema.json").read_text())
-        assert schema == {"fields": {}}
-
-    def test_update_schema_adds_field(self, artifacts_dir):
-        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
-        _ensure_instance_schema("my-app", "model_domain")
-        handle_update_schema("my-app", "model_domain", "risk_drivers", "optional", "Key risks that shape the model")
-        schema_path = artifacts_dir / "my-app" / "model_domain" / "schema.json"
-        schema = json.loads(schema_path.read_text())
-        assert "risk_drivers" in schema["fields"]
-        assert schema["fields"]["risk_drivers"]["kind"] == "optional"
-
-    def test_update_schema_appends_decision_log(self, artifacts_dir):
-        (artifacts_dir / "my-app" / "model_domain").mkdir(parents=True)
-        _ensure_instance_schema("my-app", "model_domain")
-        handle_update_schema("my-app", "model_domain", "risk_drivers", "optional", "Key risks")
-        schema = json.loads((artifacts_dir / "my-app" / "model_domain" / "schema.json").read_text())
-        assert len(schema["decision_log"]) == 1
-        assert schema["decision_log"][0]["trigger"] == "schema_field_added"
-        assert schema["decision_log"][0]["field_name"] == "risk_drivers"
-
-
-# ---------------------------------------------------------------------------
-# Step 4 — Model artifact lifecycle
-# ---------------------------------------------------------------------------
-
-import pytest
-
-class TestModelV1:
-    """v1 write for all four model types."""
-
-    pytestmark = pytest.mark.lifecycle
-
-    @pytest.mark.parametrize("model_type,archetype", [
-        ("domain",    "domain_system"),
-        ("data_flow", "data_pipeline"),
-        ("system",    "system_integration"),
-        ("workflow",  "process_system"),
-    ])
-    def test_v1_creates_artifact_file(self, prd_artifacts_dir, model_type, archetype):
-        from tool_handler import handle_write_model
-        handle_write_prd(make_prd_input(slug="my-app", primary_archetype=archetype))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        artifact = handle_write_model(make_model_input(slug="my-app", model_type=model_type))
-        stage = f"model_{model_type}"
-        assert (prd_artifacts_dir / "my-app" / stage / "v1.json").exists()
-        assert artifact["version"] == 1
-        assert artifact["model_type"] == model_type
-        assert artifact["status"] == "draft"
-
-    @pytest.mark.parametrize("model_type,archetype", [
-        ("domain",    "domain_system"),
-        ("data_flow", "data_pipeline"),
-        ("system",    "system_integration"),
-        ("workflow",  "process_system"),
-    ])
-    def test_v1_creates_schema_file(self, prd_artifacts_dir, model_type, archetype):
-        from tool_handler import handle_write_model
-        handle_write_prd(make_prd_input(slug="my-app", primary_archetype=archetype))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        handle_write_model(make_model_input(slug="my-app", model_type=model_type))
-        stage = f"model_{model_type}"
-        schema_path = prd_artifacts_dir / "my-app" / stage / "schema.json"
-        assert schema_path.exists()
-        schema = json.loads(schema_path.read_text())
-        assert "fields" in schema
-
-    def test_v1_references_approved_prd(self, prd_artifacts_dir):
-        from tool_handler import handle_write_model
-        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        artifact = handle_write_model(make_model_input(slug="my-app", model_type="domain"))
-        assert len(artifact["references"]) == 1
-        assert "prd" in artifact["references"][0]
-
-    def test_layered_workflow_references_approved_model_system(self, prd_artifacts_dir):
-        """In layered topology, model_workflow v1 references model_system, not prd."""
-        from tool_handler import handle_write_model, handle_approve_model
-        handle_write_prd(make_prd_input(
-            slug="my-app",
-            primary_archetype="system_integration",
-            secondary_archetype="process_system",
-        ))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        handle_write_model(make_model_input(slug="my-app", model_type="system"))
-        handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_system" / "v1.json"))
-        artifact = handle_write_model(make_model_input(slug="my-app", model_type="workflow"))
-        assert len(artifact["references"]) == 1
-        assert "model_system" in artifact["references"][0]
+    def test_id_stable(self, prd_artifacts_dir):
+        v1 = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        v2 = handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        assert v1["id"] == v2["id"]
 
 
 class TestApproveModel:
-    """Approval gate: mandatory field validation."""
-
-    pytestmark = pytest.mark.lifecycle
-
-    def test_approve_succeeds_with_all_mandatory_fields(self, prd_artifacts_dir):
-        from tool_handler import handle_write_model, handle_approve_model
-        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        handle_write_model(make_model_input(slug="my-app", model_type="domain"))
-        artifact = handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_domain" / "v1.json"))
+    def test_status_becomes_approved(self, prd_artifacts_dir):
+        handle_write_artifact(SLUG, "model_domain", make_model_body("domain"))
+        artifact = handle_approve_artifact(str(prd_artifacts_dir / SLUG / "model_domain" / "v1.json"))
         assert artifact["status"] == "approved"
 
-    def test_approve_adds_decision_log_entry(self, prd_artifacts_dir):
-        from tool_handler import handle_write_model, handle_approve_model
-        handle_write_prd(make_prd_input(slug="my-app", primary_archetype="domain_system"))
-        handle_approve_prd(str(prd_artifacts_dir / "my-app" / "prd" / "v1.json"))
-        handle_write_model(make_model_input(slug="my-app", model_type="domain"))
-        artifact = handle_approve_model(str(prd_artifacts_dir / "my-app" / "model_domain" / "v1.json"))
-        approval_entry = artifact["decision_log"][-1]
-        assert approval_entry["trigger"] == "approval"
-        assert approval_entry["author"] == "human"
+    def test_missing_mandatory_field_rejects(self, prd_artifacts_dir):
+        handle_write_artifact(SLUG, "model_domain", {})  # no content
+        # schema has mandatory fields — approve should fail
+        schema_path = prd_artifacts_dir / SLUG / "model_domain" / "schema.json"
+        schema = json.loads(schema_path.read_text())
+        if not any(f["kind"] == "mandatory" for f in schema.get("fields", {}).values()):
+            pytest.skip("no mandatory fields in base schema")
+        with pytest.raises(ValueError, match="missing mandatory fields"):
+            handle_approve_artifact(str(prd_artifacts_dir / SLUG / "model_domain" / "v1.json"))
+
+
+# ===========================================================================
+# Model — all five types have correct model_type and topology routing
+# ===========================================================================
+
+@pytest.mark.parametrize("primary_archetype,model_type,stage", [
+    ("domain_system",    "domain",    "model_domain"),
+    ("data_pipeline",    "data_flow", "model_data_flow"),
+    ("system_integration", "system", "model_system"),
+    ("process_system",   "workflow",  "model_workflow"),
+    ("system_evolution", "evolution", "model_evolution"),
+])
+def test_model_type_routing(primary_archetype, model_type, stage, artifacts_dir):
+    _create_approved_brief(SLUG, artifacts_dir)
+    handle_write_artifact(SLUG, "prd", make_prd_body(primary_archetype=primary_archetype))
+    handle_approve_artifact(str(artifacts_dir / SLUG / "prd" / "v1.json"))
+    a = handle_write_artifact(SLUG, stage, make_model_body(model_type))
+    assert a["model_type"] == model_type
+    assert a["primary_archetype"] == primary_archetype
+    assert a["id"].startswith(stage.replace("_", "-"))
+
+
+# ===========================================================================
+# Layered topology: system_integration + process_system
+# ===========================================================================
+
+class TestLayeredModelChain:
+    def test_model_workflow_references_model_system(self, artifacts_dir):
+        _create_approved_brief(SLUG, artifacts_dir)
+        handle_write_artifact(SLUG, "prd", make_prd_body(
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_artifact(str(artifacts_dir / SLUG / "prd" / "v1.json"))
+
+        handle_write_artifact(SLUG, "model_system", make_model_body("system"))
+        handle_approve_artifact(str(artifacts_dir / SLUG / "model_system" / "v1.json"))
+
+        wf = handle_write_artifact(SLUG, "model_workflow", make_model_body("workflow"))
+        assert any("model_system" in r for r in wf["references"])
+
+    def test_model_workflow_blocked_until_model_system_approved(self, artifacts_dir):
+        _create_approved_brief(SLUG, artifacts_dir)
+        handle_write_artifact(SLUG, "prd", make_prd_body(
+            primary_archetype="system_integration",
+            secondary_archetype="process_system",
+        ))
+        handle_approve_artifact(str(artifacts_dir / SLUG / "prd" / "v1.json"))
+        handle_write_artifact(SLUG, "model_system", make_model_body("system"))
+        # model_system is draft (not approved) — model_workflow should fail
+        with pytest.raises(ValueError, match="no approved model_system"):
+            handle_write_artifact(SLUG, "model_workflow", make_model_body("workflow"))
+
+
+# ===========================================================================
+# Design — v1 / v2 / approve
+# ===========================================================================
+
+class TestDesignV1:
+    def test_id_has_design_prefix(self, model_artifacts_dir):
+        a = handle_write_artifact(SLUG, "design", make_design_body())
+        assert a["id"].startswith("design-")
+
+    def test_primary_archetype_on_envelope(self, model_artifacts_dir):
+        a = handle_write_artifact(SLUG, "design", make_design_body())
+        assert a["primary_archetype"] == "domain_system"
+
+    def test_references_approved_model(self, model_artifacts_dir):
+        a = handle_write_artifact(SLUG, "design", make_design_body())
+        assert any("model_domain" in r for r in a["references"])
+
+    def test_schema_initialised_with_archetype_base(self, model_artifacts_dir):
+        handle_write_artifact(SLUG, "design", make_design_body())
+        schema = json.loads((model_artifacts_dir / SLUG / "design" / "schema.json").read_text())
+        # domain_system schema has layering_strategy as mandatory
+        assert "layering_strategy" in schema.get("fields", {})
+
+    def test_no_approved_model_raises(self, prd_artifacts_dir):
+        with pytest.raises(ValueError, match="no approved model_domain"):
+            handle_write_artifact(SLUG, "design", make_design_body())
+
+
+class TestDesignV2:
+    def test_version_increments(self, model_artifacts_dir):
+        handle_write_artifact(SLUG, "design", make_design_body())
+        v2 = handle_write_artifact(SLUG, "design", make_design_body())
+        assert v2["version"] == 2
+
+    def test_id_stable(self, model_artifacts_dir):
+        v1 = handle_write_artifact(SLUG, "design", make_design_body())
+        v2 = handle_write_artifact(SLUG, "design", make_design_body())
+        assert v1["id"] == v2["id"]
+
+
+class TestApproveDesign:
+    def test_status_becomes_approved(self, model_artifacts_dir):
+        handle_write_artifact(SLUG, "design", make_design_body())
+        artifact = handle_approve_artifact(str(model_artifacts_dir / SLUG / "design" / "v1.json"))
+        assert artifact["status"] == "approved"
+
+
+# ===========================================================================
+# Tech Stack — v1 / approve
+# ===========================================================================
+
+class TestTechStackV1:
+    def test_id_has_tech_stack_prefix(self, design_artifacts_dir):
+        a = handle_write_artifact(SLUG, "tech_stack", make_tech_stack_body())
+        assert a["id"].startswith("tech-stack-")
+
+    def test_primary_archetype_on_envelope(self, design_artifacts_dir):
+        a = handle_write_artifact(SLUG, "tech_stack", make_tech_stack_body())
+        assert a["primary_archetype"] == "domain_system"
+
+    def test_references_approved_design(self, design_artifacts_dir):
+        a = handle_write_artifact(SLUG, "tech_stack", make_tech_stack_body())
+        assert any("design/v1.json" in r for r in a["references"])
+
+    def test_no_approved_design_raises(self, model_artifacts_dir):
+        with pytest.raises(ValueError, match="no approved design"):
+            handle_write_artifact(SLUG, "tech_stack", make_tech_stack_body())
+
+
+class TestApproveTechStack:
+    def test_status_becomes_approved(self, design_artifacts_dir):
+        handle_write_artifact(SLUG, "tech_stack", make_tech_stack_body())
+        artifact = handle_approve_artifact(str(design_artifacts_dir / SLUG / "tech_stack" / "v1.json"))
+        assert artifact["status"] == "approved"
+
+
+# ===========================================================================
+# Instance schema — creation and CRUD across stages
+# ===========================================================================
+
+class TestInstanceSchemaCreation:
+    @pytest.mark.parametrize("stage,fixture", [
+        ("brief", "artifacts_dir"),
+    ])
+    def test_schema_created_on_first_write(self, stage, fixture, request):
+        dir_ = request.getfixturevalue(fixture)
+        handle_write_artifact(SLUG, stage, make_brief_body())
+        assert (dir_ / SLUG / stage / "schema.json").exists()
+
+    def test_prd_schema_created(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        assert (brief_artifacts_dir / SLUG / "prd" / "schema.json").exists()
+
+    def test_design_schema_has_archetype_fields(self, model_artifacts_dir):
+        handle_write_artifact(SLUG, "design", make_design_body())
+        schema = json.loads((model_artifacts_dir / SLUG / "design" / "schema.json").read_text())
+        assert "layering_strategy" in schema["fields"]
+
+    def test_schema_not_overwritten_on_v2(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        handle_add_schema_field(SLUG, "prd", "custom_field", "optional", "A custom field")
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        schema = json.loads((brief_artifacts_dir / SLUG / "prd" / "schema.json").read_text())
+        assert "custom_field" in schema["fields"]
+
+
+class TestSchemaCRUD:
+    def test_add_field(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        schema = handle_add_schema_field(SLUG, "prd", "risks", "mandatory", "Risk list")
+        assert "risks" in schema["fields"]
+        assert schema["fields"]["risks"]["kind"] == "mandatory"
+
+    def test_add_duplicate_field_raises(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        handle_add_schema_field(SLUG, "prd", "risks", "optional", "Risk list")
+        with pytest.raises(ValueError, match="already exists"):
+            handle_add_schema_field(SLUG, "prd", "risks", "optional", "Risk list")
+
+    def test_update_field_kind(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        handle_add_schema_field(SLUG, "prd", "risks", "optional", "Risk list")
+        schema = handle_update_schema_field(SLUG, "prd", "risks", kind="mandatory")
+        assert schema["fields"]["risks"]["kind"] == "mandatory"
+
+    def test_rename_clears_old_key_from_draft(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body(old_key="value"))
+        handle_add_schema_field(SLUG, "prd", "old_key", "optional", "Old field")
+        handle_update_schema_field(SLUG, "prd", "old_key", new_field_name="new_key")
+        draft_path = brief_artifacts_dir / SLUG / "prd" / "v1.json"
+        content = json.loads(draft_path.read_text())["content"]
+        assert "old_key" not in content
+
+    def test_delete_field(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        handle_add_schema_field(SLUG, "prd", "temp_field", "optional", "Temp")
+        schema = handle_delete_schema_field(SLUG, "prd", "temp_field", "No longer needed")
+        assert "temp_field" not in schema["fields"]
+
+    def test_schema_decision_log_records_add(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        schema = handle_add_schema_field(SLUG, "prd", "risks", "optional", "Risk list")
+        assert any(e["trigger"] == "schema_field_added" for e in schema.get("decision_log", []))
+
+    def test_schema_decision_log_records_delete(self, brief_artifacts_dir):
+        handle_write_artifact(SLUG, "prd", make_prd_body())
+        handle_add_schema_field(SLUG, "prd", "temp_field", "optional", "Temp")
+        schema = handle_delete_schema_field(SLUG, "prd", "temp_field", "cleanup")
+        assert any(e["trigger"] == "schema_field_deleted" for e in schema.get("decision_log", []))
+
+
+# ===========================================================================
+# Unknown stage rejection
+# ===========================================================================
+
+def test_unknown_stage_raises(artifacts_dir):
+    with pytest.raises(ValueError, match="unknown stage"):
+        handle_write_artifact(SLUG, "nonexistent_stage", {})

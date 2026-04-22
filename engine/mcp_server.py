@@ -11,27 +11,13 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from tool_handler import (
-    handle_write_prd, handle_approve_prd,
-    handle_write_domain_model, handle_approve_domain_model,
-    handle_write_brief, handle_approve_brief,
-    handle_write_design, handle_approve_design,
-    handle_write_tech_stack, handle_approve_tech_stack,
-    handle_write_model, handle_approve_model,
-    handle_update_schema,
-    get_available_artifacts, read_artifact,
-    _MODEL_TYPE_TO_STAGE,
+    handle_write_artifact, handle_approve_artifact,
+    handle_add_schema_field, handle_update_schema_field, handle_delete_schema_field,
+    get_available_artifacts, read_artifact, handle_get_work_context,
 )
-from renderer import render_prd, render_domain_model, render_brief, render_design, render_tech_stack, render_model
+from renderer import render_artifact
 
 app = Server("agentic-team")
-
-_SCHEMAS_DIR = Path(__file__).parent / "schemas"
-
-_WRITE_BRIEF_INPUT_SCHEMA        = json.loads((_SCHEMAS_DIR / "brief.mcp.json").read_text())
-_WRITE_PRD_INPUT_SCHEMA          = json.loads((_SCHEMAS_DIR / "prd.mcp.json").read_text())
-_WRITE_DOMAIN_MODEL_INPUT_SCHEMA = json.loads((_SCHEMAS_DIR / "domain.mcp.json").read_text())
-_WRITE_DESIGN_INPUT_SCHEMA       = json.loads((_SCHEMAS_DIR / "design.mcp.json").read_text())
-_WRITE_TECH_STACK_INPUT_SCHEMA   = json.loads((_SCHEMAS_DIR / "tech_stack.mcp.json").read_text())
 
 
 @app.list_tools()
@@ -48,18 +34,9 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "required": ["slug", "stage"],
                 "properties": {
-                    "slug": {
-                        "type": "string",
-                        "description": "Project slug, e.g. 'deploy-rollback'.",
-                    },
-                    "stage": {
-                        "type": "string",
-                        "description": "DAG stage: brief, prd, domain, or design.",
-                    },
-                    "version": {
-                        "type": "integer",
-                        "description": "Version number to read (e.g. 1, 2). Omit for latest.",
-                    },
+                    "slug": {"type": "string", "description": "Project slug, e.g. 'deploy-rollback'."},
+                    "stage": {"type": "string", "description": "DAG stage, e.g. 'brief', 'prd', 'model_domain', 'design', 'tech_stack'."},
+                    "version": {"type": "integer", "description": "Version number to read. Omit for latest."},
                 },
             },
         ),
@@ -67,63 +44,57 @@ async def list_tools() -> list[Tool]:
             name="get_available_artifacts",
             description=(
                 "Return in-progress, approved, and ready-to-start artifacts for a DAG stage. "
-                "Call this at the start of a no-argument session to populate the opening menu. "
-                "Returns three buckets: in_progress (draft), approved, and ready_to_start "
-                "(approved upstream artifact exists but this stage has no artifact yet)."
+                "Call at the start of a no-argument session to populate the opening menu."
             ),
             inputSchema={
                 "type": "object",
                 "required": ["stage"],
                 "properties": {
-                    "stage": {
-                        "type": "string",
-                        "description": "DAG stage to query. Current stages: brief, prd, domain, design, tech_stack.",
-                    }
+                    "stage": {"type": "string", "description": "DAG stage to query: brief, prd, model_domain, model_data_flow, model_system, model_workflow, model_evolution, design, tech_stack."},
                 },
             },
         ),
         Tool(
-            name="write_prd",
-            description="Write or update a structured PRD artifact to disk. Call this when the user signals readiness to draft or refine.",
-            inputSchema=_WRITE_PRD_INPUT_SCHEMA,
-        ),
-        Tool(
-            name="approve_prd",
-            description="Mark a PRD artifact as approved. Advances the DAG to the Domain Agent.",
-            inputSchema={
-                "type": "object",
-                "required": ["artifact_path"],
-                "properties": {
-                    "artifact_path": {
-                        "type": "string",
-                        "description": "Relative path to the PRD JSON file. Example: artifacts/deploy-rollback/prd/v2.json",
-                    }
-                },
-            },
-        ),
-        Tool(
-            name="write_model",
+            name="get_work_context",
             description=(
-                "Write or update a model artifact for any archetype. "
-                "Routes to the correct stage directory based on model_type. "
-                "The engine validates model_type against the PRD archetype and resolves the upstream reference from the topology."
+                "Return the approved upstream artifact and current draft for a DAG stage. "
+                "Call at the start of any agent session to get: "
+                "upstream — the approved artifact from the previous stage; "
+                "current_draft — the in-progress draft at this stage (null if none exists yet)."
             ),
             inputSchema={
                 "type": "object",
-                "required": ["slug", "model_type", "content"],
+                "required": ["slug", "stage"],
                 "properties": {
-                    "slug": {"type": "string"},
-                    "model_type": {
+                    "slug": {"type": "string", "description": "Project slug (e.g. 'deploy-rollback')."},
+                    "stage": {"type": "string", "description": "DAG stage to get context for (e.g. 'prd', 'model_domain', 'design', 'tech_stack')."},
+                },
+            },
+        ),
+        Tool(
+            name="write_artifact",
+            description=(
+                "Write or update any artifact stage. "
+                "The engine verifies the upstream is approved, enforces locked fields, "
+                "and initialises the instance schema on first write. "
+                "body is stored verbatim as the artifact content."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["slug", "stage", "body"],
+                "properties": {
+                    "slug": {"type": "string", "description": "Project slug (e.g. 'deploy-rollback')."},
+                    "stage": {
                         "type": "string",
-                        "enum": ["domain", "data_flow", "system", "workflow"],
-                        "description": "Must match the PRD archetype for this slug.",
+                        "description": "DAG stage to write: brief, prd, model_domain, model_data_flow, model_system, model_workflow, model_evolution, design, tech_stack.",
                     },
-                    "content": {
+                    "body": {
                         "type": "object",
-                        "description": "Model content. Fields are validated against the instance schema at approval time.",
+                        "description": "Artifact content. All fields are passed through; mandatory fields are validated at approval time.",
                     },
                     "decision_log_entry": {
                         "type": "object",
+                        "description": "Optional log entry recorded with this write.",
                         "properties": {
                             "trigger": {"type": "string"},
                             "summary": {"type": "string"},
@@ -134,86 +105,31 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="approve_model",
-            description="Approve a model artifact after validating all mandatory schema fields are present.",
-            inputSchema={
-                "type": "object",
-                "required": ["artifact_path"],
-                "properties": {
-                    "artifact_path": {
-                        "type": "string",
-                        "description": "Relative path to the model JSON file. Example: artifacts/my-app/model_domain/v1.json",
-                    }
-                },
-            },
-        ),
-        Tool(
-            name="write_design",
-            description="Write or update a structured Design artifact to disk. Call this when the user signals readiness to draft or refine. Pass only slug — the engine resolves the upstream domain model path automatically.",
-            inputSchema=_WRITE_DESIGN_INPUT_SCHEMA,
-        ),
-        Tool(
-            name="approve_design",
-            description="Mark a Design artifact as approved. Advances the DAG to the Execution Agent.",
-            inputSchema={
-                "type": "object",
-                "required": ["artifact_path"],
-                "properties": {
-                    "artifact_path": {
-                        "type": "string",
-                        "description": "Relative path to the design JSON file. Example: artifacts/deploy-rollback/design/v1.json",
-                    }
-                },
-            },
-        ),
-        Tool(
-            name="write_brief",
-            description="Write or update a structured Brief artifact to disk. Call this when the user signals readiness to draft or refine, and after direction has been confirmed.",
-            inputSchema=_WRITE_BRIEF_INPUT_SCHEMA,
-        ),
-        Tool(
-            name="approve_brief",
-            description="Mark a Brief artifact as approved. Advances the DAG to the Product Owner.",
-            inputSchema={
-                "type": "object",
-                "required": ["artifact_path"],
-                "properties": {
-                    "artifact_path": {
-                        "type": "string",
-                        "description": "Relative path to the brief JSON file. Example: artifacts/deploy-rollback/brief/v1.json",
-                    }
-                },
-            },
-        ),
-        Tool(
-            name="write_tech_stack",
+            name="approve_artifact",
             description=(
-                "Write or update a Tech Stack artifact to disk. "
-                "Call this when every decision on the confirmed agenda is resolved and the user signals readiness to draft. "
-                "Pass only slug — the engine resolves the upstream design artifact path automatically."
+                "Approve any artifact after validating all mandatory schema fields are present. "
+                "Advances the DAG to the next stage."
             ),
-            inputSchema=_WRITE_TECH_STACK_INPUT_SCHEMA,
-        ),
-        Tool(
-            name="approve_tech_stack",
-            description="Mark a Tech Stack artifact as approved. Advances the DAG to the Execution Agent.",
             inputSchema={
                 "type": "object",
                 "required": ["artifact_path"],
                 "properties": {
                     "artifact_path": {
                         "type": "string",
-                        "description": "Relative path to the tech stack JSON file. Example: artifacts/deploy-rollback/tech_stack/v1.json",
-                    }
+                        "description": "Relative path to the artifact JSON file. Example: artifacts/deploy-rollback/prd/v2.json",
+                    },
                 },
             },
         ),
         Tool(
-            name="update_schema",
+            name="add_schema_field",
             description=(
-                "Add a field to the instance schema for a slug/stage. "
-                "Use this when you discover a field that belongs in the artifact but is not in the base schema. "
-                "The field will be validated at approval time if kind is 'mandatory'."
+                "Add a new field to the instance schema for a slug/stage. "
+                "Use when you discover a concept the base schema has no field for — "
+                "call this before the next write so the field is included in the artifact. "
+                "kind 'mandatory' means approval will fail if the field is absent; "
+                "'optional' means it may be omitted. "
+                "Rejects if the field already exists."
             ),
             inputSchema={
                 "type": "object",
@@ -221,9 +137,48 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "slug": {"type": "string"},
                     "stage": {"type": "string"},
-                    "field_name": {"type": "string", "description": "Name of the new field."},
+                    "field_name": {"type": "string"},
                     "kind": {"type": "string", "enum": ["mandatory", "optional"]},
                     "description": {"type": "string", "description": "What this field captures and why it matters."},
+                },
+            },
+        ),
+        Tool(
+            name="update_schema_field",
+            description=(
+                "Change an existing field's kind, description, or name. "
+                "Provide at least one of: kind, description, new_field_name. "
+                "If new_field_name is provided, the field is renamed in the schema "
+                "and the old key is cleared from the current draft artifact."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["slug", "stage", "field_name"],
+                "properties": {
+                    "slug": {"type": "string"},
+                    "stage": {"type": "string"},
+                    "field_name": {"type": "string", "description": "Current name of the field to update."},
+                    "kind": {"type": "string", "enum": ["mandatory", "optional"]},
+                    "description": {"type": "string"},
+                    "new_field_name": {"type": "string", "description": "Rename the field. Clears old key from the current draft."},
+                },
+            },
+        ),
+        Tool(
+            name="delete_schema_field",
+            description=(
+                "Remove a field from the instance schema. "
+                "The field is deleted from the schema and its value is cleared from the current draft. "
+                "Requires a non-empty justification — recorded in the schema decision log."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["slug", "stage", "field_name", "justification"],
+                "properties": {
+                    "slug": {"type": "string"},
+                    "stage": {"type": "string"},
+                    "field_name": {"type": "string"},
+                    "justification": {"type": "string", "description": "Why this field is being removed."},
                 },
             },
         ),
@@ -240,114 +195,51 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 async def _dispatch(name: str, arguments: dict) -> list[TextContent]:
     if name == "read_artifact":
-        artifact = read_artifact(
-            arguments["slug"],
-            arguments["stage"],
-            arguments.get("version"),
-        )
-        return [TextContent(type="text", text=json.dumps(artifact, indent=2))]
+        result = read_artifact(arguments["slug"], arguments["stage"], arguments.get("version"))
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
     if name == "get_available_artifacts":
         result = get_available_artifacts(arguments["stage"])
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-    if name == "write_prd":
-        slug = arguments.get("slug", "unknown")
-        existing_path = Path("artifacts") / slug / "prd"
-        existing_prd = None
+    if name == "get_work_context":
+        result = handle_get_work_context(arguments["slug"], arguments["stage"])
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        if existing_path.exists():
-            versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
-            if versions:
-                existing_prd = json.loads(versions[-1].read_text())
+    if name == "write_artifact":
+        stage = arguments["stage"]
+        artifact = handle_write_artifact(
+            slug=arguments["slug"],
+            stage=stage,
+            body=dict(arguments["body"]),
+            decision_log_entry=arguments.get("decision_log_entry"),
+        )
+        return [TextContent(type="text", text=render_artifact(artifact, stage))]
 
-        artifact = handle_write_prd(arguments, existing_prd)
-        rendered = render_prd(artifact)
-        return [TextContent(type="text", text=rendered)]
+    if name == "approve_artifact":
+        artifact = handle_approve_artifact(arguments["artifact_path"])
+        return [TextContent(type="text", text=f"Approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
 
-    if name == "approve_prd":
-        artifact = handle_approve_prd(arguments["artifact_path"])
-        return [TextContent(type="text", text=f"PRD approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
+    if name == "add_schema_field":
+        schema = handle_add_schema_field(
+            arguments["slug"], arguments["stage"], arguments["field_name"],
+            arguments["kind"], arguments["description"],
+        )
+        return [TextContent(type="text", text=json.dumps(schema, indent=2))]
 
-    if name == "write_model":
-        slug = arguments.get("slug", "unknown")
-        model_type = arguments.get("model_type", "")
-        stage = _MODEL_TYPE_TO_STAGE.get(model_type)
-        existing_model = None
-        if stage:
-            existing_path = Path("artifacts") / slug / stage
-            if existing_path.exists():
-                versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
-                if versions:
-                    existing_model = json.loads(versions[-1].read_text())
-        artifact = handle_write_model(dict(arguments), existing_model)
-        return [TextContent(type="text", text=render_model(artifact))]
+    if name == "update_schema_field":
+        schema = handle_update_schema_field(
+            arguments["slug"], arguments["stage"], arguments["field_name"],
+            kind=arguments.get("kind"),
+            description=arguments.get("description"),
+            new_field_name=arguments.get("new_field_name"),
+        )
+        return [TextContent(type="text", text=json.dumps(schema, indent=2))]
 
-    if name == "approve_model":
-        artifact = handle_approve_model(arguments["artifact_path"])
-        return [TextContent(type="text", text=f"Model approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
-
-    if name == "write_design":
-        slug = arguments.get("slug", "unknown")
-        existing_path = Path("artifacts") / slug / "design"
-        existing_design = None
-
-        if existing_path.exists():
-            versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
-            if versions:
-                existing_design = json.loads(versions[-1].read_text())
-
-        artifact = handle_write_design(arguments, existing_design)
-        rendered = render_design(artifact)
-        return [TextContent(type="text", text=rendered)]
-
-    if name == "approve_design":
-        artifact = handle_approve_design(arguments["artifact_path"])
-        return [TextContent(type="text", text=f"Design approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
-
-    if name == "write_brief":
-        slug = arguments.get("slug", "unknown")
-        existing_path = Path("artifacts") / slug / "brief"
-        existing_brief = None
-
-        if existing_path.exists():
-            versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
-            if versions:
-                existing_brief = json.loads(versions[-1].read_text())
-
-        artifact = handle_write_brief(arguments, existing_brief)
-        rendered = render_brief(artifact)
-        return [TextContent(type="text", text=rendered)]
-
-    if name == "approve_brief":
-        artifact = handle_approve_brief(arguments["artifact_path"])
-        return [TextContent(type="text", text=f"Brief approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
-
-    if name == "write_tech_stack":
-        slug = arguments.get("slug", "unknown")
-        existing_path = Path("artifacts") / slug / "tech_stack"
-        existing_tech_stack = None
-
-        if existing_path.exists():
-            versions = sorted(existing_path.glob("v*.json"), key=lambda p: int(p.stem[1:]))
-            if versions:
-                existing_tech_stack = json.loads(versions[-1].read_text())
-
-        artifact = handle_write_tech_stack(arguments, existing_tech_stack)
-        rendered = render_tech_stack(artifact)
-        return [TextContent(type="text", text=rendered)]
-
-    if name == "approve_tech_stack":
-        artifact = handle_approve_tech_stack(arguments["artifact_path"])
-        return [TextContent(type="text", text=f"Tech stack approved: {arguments['artifact_path']}\nStatus: {artifact['status']}")]
-
-    if name == "update_schema":
-        schema = handle_update_schema(
-            arguments["slug"],
-            arguments["stage"],
-            arguments["field_name"],
-            arguments["kind"],
-            arguments["description"],
+    if name == "delete_schema_field":
+        schema = handle_delete_schema_field(
+            arguments["slug"], arguments["stage"], arguments["field_name"],
+            arguments["justification"],
         )
         return [TextContent(type="text", text=json.dumps(schema, indent=2))]
 

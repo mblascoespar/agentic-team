@@ -1,0 +1,28 @@
+{
+  "fields": {
+    "idea": {
+      "kind": "mandatory",
+      "description": "Verbatim original idea as provided by the user"
+    },
+    "alternatives": {
+      "kind": "mandatory",
+      "description": "2-3 alternative directions with tradeoffs"
+    },
+    "chosen_direction": {
+      "kind": "mandatory",
+      "description": "Chosen direction with rationale referencing the alternatives"
+    },
+    "competitive_scan": {
+      "kind": "mandatory",
+      "description": "What exists, how it addresses the problem, and what gap remains"
+    },
+    "complexity_assessment": {
+      "kind": "mandatory",
+      "description": "Scope (small/medium/large) and whether decomposition is needed"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved questions to be addressed before approval"
+    }
+  }
+}

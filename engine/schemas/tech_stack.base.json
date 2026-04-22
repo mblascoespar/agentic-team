@@ -1,0 +1,12 @@
+{
+  "fields": {
+    "adrs": {
+      "kind": "mandatory",
+      "description": "Architecture Decision Records — one per confirmed decision point with candidates, chosen, rationale, and rejections"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Genuine post-draft gaps (e.g. version compatibility not yet verified)"
+    }
+  }
+}

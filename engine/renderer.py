@@ -1,6 +1,58 @@
 import json as _json
 
 
+# ---------------------------------------------------------------------------
+# Shared rendering helpers
+# ---------------------------------------------------------------------------
+
+def _render_section(label: str, value) -> list[str]:
+    """Render a single content field generically — handles str, list, dict."""
+    lines: list[str] = [label]
+    if isinstance(value, str):
+        lines.append(f"  {value}")
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                lines.append(f"  • {item}")
+            elif isinstance(item, dict):
+                lines.append("  ──")
+                for k, v in item.items():
+                    lines.append(
+                        f"    {k}: {_json.dumps(v, ensure_ascii=False)}"
+                        if isinstance(v, (list, dict))
+                        else f"    {k}: {v}"
+                    )
+            else:
+                lines.append(f"  • {_json.dumps(item, ensure_ascii=False)}")
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            lines.append(
+                f"  {k}: {_json.dumps(v, ensure_ascii=False)}"
+                if isinstance(v, (list, dict))
+                else f"  {k}: {v}"
+            )
+    else:
+        lines.append(f"  {value}")
+    lines.append("")
+    return lines
+
+
+def _render_decision_log(artifact: dict) -> list[str]:
+    if not artifact.get("decision_log"):
+        return []
+    lines = ["DECISION LOG"]
+    for entry in artifact["decision_log"]:
+        lines += [
+            f"  v{entry['version']} · {entry['timestamp'][:10]} · "
+            f"{entry['author']} · {entry['trigger']}",
+            f"    {entry['summary']}",
+        ]
+        if entry.get("changed_fields"):
+            lines += [f"    fields: {', '.join(entry['changed_fields'])}"]
+    lines += [""]
+    return lines
+
+
 def render_model(artifact: dict) -> str:
     """Render any model artifact (domain, data_flow, system, workflow).
 
@@ -230,35 +282,23 @@ def render_brief(artifact: dict) -> str:
     return "\n".join(lines)
 
 
-def render_design(artifact: dict) -> str:
-    c = artifact["content"]
-    lines = [
-        f"Design: {artifact['slug']}  (v{artifact['version']} · {artifact['status']})",
-        f"Path: artifacts/{artifact['slug']}/design/v{artifact['version']}.json",
-        "",
-    ]
+def _render_design_domain_system(c: dict) -> list[str]:
+    lines: list[str] = []
 
-    # Layering strategy
     if c.get("layering_strategy"):
         lines += ["LAYERING STRATEGY"]
         for ls in c["layering_strategy"]:
-            cqrs_note = ""
-            if ls.get("cqrs_applied"):
-                models = ", ".join(ls.get("cqrs_read_models") or [])
-                cqrs_note = f"  CQRS: yes (read models: {models})"
-            else:
-                cqrs_note = "  CQRS: no"
-            lines += [
-                f"  {ls['context']}: {ls['pattern']}",
-                cqrs_note,
-            ]
+            cqrs_note = (
+                f"  CQRS: yes (read models: {', '.join(ls.get('cqrs_read_models') or [])})"
+                if ls.get("cqrs_applied") else "  CQRS: no"
+            )
+            lines += [f"  {ls['context']}: {ls['pattern']}", cqrs_note]
             r = ls.get("rationale", {})
             lines += [f"  rationale: {r.get('derived_value', '')} — {r.get('rule_applied', '')}"]
             if r.get("override_reason"):
                 lines += [f"  override: {r['override_reason']}"]
         lines += [""]
 
-    # Aggregate consistency
     if c.get("aggregate_consistency"):
         lines += ["AGGREGATE CONSISTENCY"]
         for ac in c["aggregate_consistency"]:
@@ -267,11 +307,13 @@ def render_design(artifact: dict) -> str:
                 lines += [f"    event: {ev['event_name']} → {ev['target_aggregate']}"]
         lines += [""]
 
-    # Integration patterns
     if c.get("integration_patterns"):
         lines += ["INTEGRATION PATTERNS"]
         for ip in c["integration_patterns"]:
-            acl_note = f"ACL: yes — {ip.get('translation_approach', '')}" if ip.get("acl_needed") else "ACL: no"
+            acl_note = (
+                f"ACL: yes — {ip.get('translation_approach', '')}"
+                if ip.get("acl_needed") else "ACL: no"
+            )
             lines += [
                 f"  {ip['source_context']} → {ip['target_context']}  [{ip['relationship_type']}]",
                 f"    style: {ip['integration_style']}  api: {ip['api_surface_type']}  {acl_note}",
@@ -279,7 +321,6 @@ def render_design(artifact: dict) -> str:
             ]
         lines += [""]
 
-    # Storage
     if c.get("storage"):
         lines += ["STORAGE"]
         for s in c["storage"]:
@@ -291,7 +332,6 @@ def render_design(artifact: dict) -> str:
             lines += [f"    rationale: {r.get('derived_value', '')} — {r.get('rule_applied', '')}"]
         lines += [""]
 
-    # Cross-cutting
     cc = c.get("cross_cutting", {})
     if cc:
         lines += ["CROSS-CUTTING CONCERNS"]
@@ -314,16 +354,12 @@ def render_design(artifact: dict) -> str:
             ]
         obs = cc.get("observability", {})
         if obs:
-            lines += [
-                "  Observability",
-                f"    trace boundaries: {obs.get('trace_boundaries', '')}",
-            ]
+            lines += ["  Observability", f"    trace boundaries: {obs.get('trace_boundaries', '')}"]
             for ll in obs.get("logging_per_layer") or []:
                 lines += [f"    log [{ll['layer']}]: {ll['what_to_log']}"]
             lines += [f"    metrics: {obs.get('metrics_exposure', '')}"]
         lines += [""]
 
-    # Testing strategy
     if c.get("testing_strategy"):
         lines += ["TESTING STRATEGY"]
         for ts in c["testing_strategy"]:
@@ -334,7 +370,6 @@ def render_design(artifact: dict) -> str:
             ]
         lines += [""]
 
-    # NFRs
     if c.get("nfrs"):
         lines += ["NON-FUNCTIONAL REQUIREMENTS"]
         for nfr in c["nfrs"]:
@@ -350,17 +385,96 @@ def render_design(artifact: dict) -> str:
     else:
         lines += ["OPEN QUESTIONS: none", ""]
 
-    if artifact.get("decision_log"):
-        lines += ["DECISION LOG"]
-        for entry in artifact["decision_log"]:
-            lines += [
-                f"  v{entry['version']} · {entry['timestamp'][:10]} · {entry['author']} · {entry['trigger']}",
-                f"    {entry['summary']}",
-            ]
-            if entry.get("changed_fields"):
-                lines += [f"    fields: {', '.join(entry['changed_fields'])}"]
-        lines += [""]
+    return lines
 
+
+def _render_design_data_pipeline(c: dict) -> list[str]:
+    lines: list[str] = []
+    for field in ["pipeline_topology", "storage", "failure_handling", "scaling", "observability",
+                  "testing_strategy", "nfrs"]:
+        if c.get(field) is not None:
+            lines += _render_section(field.upper().replace("_", " "), c[field])
+    if c.get("open_questions"):
+        lines += [
+            f"OPEN QUESTIONS ({len(c['open_questions'])})",
+            *[f"  {i+1}. {q}" for i, q in enumerate(c["open_questions"])],
+            "",
+        ]
+    else:
+        lines += ["OPEN QUESTIONS: none", ""]
+    return lines
+
+
+def _render_design_system_integration(c: dict) -> list[str]:
+    lines: list[str] = []
+    for field in ["integration_contracts", "error_handling", "acl_strategy", "observability",
+                  "testing_strategy", "nfrs"]:
+        if c.get(field) is not None:
+            lines += _render_section(field.upper().replace("_", " "), c[field])
+    if c.get("open_questions"):
+        lines += [
+            f"OPEN QUESTIONS ({len(c['open_questions'])})",
+            *[f"  {i+1}. {q}" for i, q in enumerate(c["open_questions"])],
+            "",
+        ]
+    else:
+        lines += ["OPEN QUESTIONS: none", ""]
+    return lines
+
+
+def _render_design_process_system(c: dict) -> list[str]:
+    lines: list[str] = []
+    for field in ["state_machine", "persistence_strategy", "human_task_routing", "timeout_model",
+                  "audit_strategy", "testing_strategy", "nfrs"]:
+        if c.get(field) is not None:
+            lines += _render_section(field.upper().replace("_", " "), c[field])
+    if c.get("open_questions"):
+        lines += [
+            f"OPEN QUESTIONS ({len(c['open_questions'])})",
+            *[f"  {i+1}. {q}" for i, q in enumerate(c["open_questions"])],
+            "",
+        ]
+    else:
+        lines += ["OPEN QUESTIONS: none", ""]
+    return lines
+
+
+def _render_design_system_evolution(c: dict) -> list[str]:
+    lines: list[str] = []
+    for field in ["migration_path", "compatibility_strategy", "rollback_plan", "regression_guards",
+                  "testing_strategy", "nfrs"]:
+        if c.get(field) is not None:
+            lines += _render_section(field.upper().replace("_", " "), c[field])
+    if c.get("open_questions"):
+        lines += [
+            f"OPEN QUESTIONS ({len(c['open_questions'])})",
+            *[f"  {i+1}. {q}" for i, q in enumerate(c["open_questions"])],
+            "",
+        ]
+    else:
+        lines += ["OPEN QUESTIONS: none", ""]
+    return lines
+
+
+def render_design(artifact: dict) -> str:
+    archetype = artifact.get("primary_archetype", "domain_system")
+    c = artifact["content"]
+    archetype_label = archetype.replace("_", " ") if archetype else "unknown"
+    lines = [
+        f"Design ({archetype_label}): {artifact['slug']}  (v{artifact['version']} · {artifact['status']})",
+        f"Path: artifacts/{artifact['slug']}/design/v{artifact['version']}.json",
+        "",
+    ]
+    dispatch = {
+        "domain_system":      _render_design_domain_system,
+        "data_pipeline":      _render_design_data_pipeline,
+        "system_integration": _render_design_system_integration,
+        "process_system":     _render_design_process_system,
+        "system_evolution":   _render_design_system_evolution,
+    }
+    renderer = dispatch.get(archetype, _render_design_domain_system)
+    lines += renderer(c)
+    lines += _render_decision_log(artifact)
     return "\n".join(lines)
 
 
@@ -429,3 +543,19 @@ def render_domain_model(artifact: dict) -> str:
         lines += [""]
 
     return "\n".join(lines)
+
+
+def render_artifact(artifact: dict, stage: str) -> str:
+    """Dispatch to the correct per-stage renderer."""
+    if stage.startswith("model_"):
+        return render_model(artifact)
+    dispatch = {
+        "brief":      render_brief,
+        "prd":        render_prd,
+        "design":     render_design,
+        "tech_stack": render_tech_stack,
+    }
+    renderer = dispatch.get(stage)
+    if renderer is None:
+        raise ValueError(f"No renderer for stage '{stage}'.")
+    return renderer(artifact)

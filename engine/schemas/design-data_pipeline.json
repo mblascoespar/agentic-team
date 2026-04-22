@@ -1,0 +1,36 @@
+{
+  "fields": {
+    "pipeline_topology": {
+      "kind": "mandatory",
+      "description": "Ordered pipeline stages with inputs, outputs, transformation logic, and dependencies between stages"
+    },
+    "storage": {
+      "kind": "mandatory",
+      "description": "Storage decision per stage: input/output stores, intermediate buffers, partitioning strategy"
+    },
+    "failure_handling": {
+      "kind": "mandatory",
+      "description": "Retry policy, dead-letter strategy, and error path per stage — including partial failure behavior"
+    },
+    "scaling": {
+      "kind": "mandatory",
+      "description": "Parallelism model, partitioning approach, and throughput/backpressure constraints per stage"
+    },
+    "observability": {
+      "kind": "mandatory",
+      "description": "Metrics, checkpointing strategy, and lag/progress monitoring per stage"
+    },
+    "testing_strategy": {
+      "kind": "mandatory",
+      "description": "Testing approach: unit per stage, integration at stage boundaries, end-to-end pipeline validation"
+    },
+    "nfrs": {
+      "kind": "mandatory",
+      "description": "Non-functional requirements: throughput, latency, data freshness, data loss tolerance"
+    },
+    "open_questions": {
+      "kind": "optional",
+      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+    }
+  }
+}
