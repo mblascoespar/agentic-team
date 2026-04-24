@@ -1,32 +1,69 @@
 {
+  "decision_object_shape": {
+    "recommendation": "string — chosen option",
+    "rationale": "string — specific upstream model signal that drove this recommendation",
+    "confidence": "high | medium | low",
+    "reversibility": "high | medium | low",
+    "alternatives_considered": ["string"],
+    "tradeoff": "string — what is gained / what is sacrificed",
+    "trigger_conditions": ["string — what future change would invalidate this recommendation"]
+  },
   "fields": {
-    "migration_path": {
+    "migration_execution_strategy": {
       "kind": "mandatory",
-      "description": "Ordered migration steps with explicit gates: which steps depend on which, and what must be verified before the next step starts"
+      "description": "Overall migration execution pattern: strangler fig, big-bang cutover, or branch by abstraction. Single decision object."
+    },
+    "facade_design": {
+      "kind": "optional",
+      "description": "Only present if execution strategy is strangler fig. Where the routing facade lives (API gateway, reverse proxy, load balancer, application-level router), resilience design, and removal plan. Single decision object."
     },
     "compatibility_strategy": {
       "kind": "mandatory",
-      "description": "How frozen contracts are preserved during migration: shim approach, dual-running period, and when the old behavior is retired"
+      "description": "How frozen contracts are preserved during migration: adapter over new implementation, dual-write, API translation layer, or feature flag. Includes shim approach per frozen surface entry and when the old behavior is retired. Single decision object."
+    },
+    "traffic_validation_strategy": {
+      "kind": "optional",
+      "description": "Only present if execution strategy is strangler fig or incremental. How behavioral equivalence is verified with live production traffic before full cutover: shadow mode (discard responses, measure discrepancy rate), canary routing, or A/B routing. Includes the discrepancy threshold that gates cutover. Single decision object."
+    },
+    "deployment_strategy": {
+      "kind": "mandatory",
+      "description": "How individual migration steps are released without exposing consumers to intermediate states: feature flags, blue-green, or rolling deployment. Array of decision objects, one per migration step, each with a 'step' identifier key."
+    },
+    "data_migration_strategy": {
+      "kind": "optional",
+      "description": "Only present if change_surface includes data structure changes. Approach: lazy migration, scripted before cutover, or dual-schema with backfill. Single decision object."
     },
     "rollback_plan": {
       "kind": "mandatory",
-      "description": "Per-step rollback approach: what state is left behind on failure, whether rollback is safe, and what triggers it"
+      "description": "Per-step rollback approach: trigger strategy (automated, time-boxed manual, or gate/manual unconditional), what state is left behind on failure, and whether rollback is safe. Array of entries, one per migration step, each with a 'step' identifier key."
     },
     "regression_guards": {
       "kind": "mandatory",
-      "description": "Tests and verification checks that must pass before each gate: what they cover and what gaps remain"
+      "description": "Tests and verification checks that must pass before each migration step proceeds. Coverage gap strategy per regression_risk entry from the upstream model. Array of entries with 'area', 'guard', 'gap_coverage_strategy', and 'blocks_step' keys."
     },
     "testing_strategy": {
       "kind": "mandatory",
-      "description": "Testing approach for migration steps: how to verify behavioral equivalence before retiring old behavior"
+      "description": "Testing approach for migration steps: characterization tests, contract tests for frozen surface, shadow testing, or equivalence verification. Array of entries with 'step', 'approach', and 'what_verifies' keys."
     },
     "nfrs": {
       "kind": "mandatory",
-      "description": "Non-functional requirements for the migration itself: downtime tolerance, migration window, data integrity guarantees"
+      "description": "Non-functional requirements for the migration itself: downtime tolerance, migration window, data integrity guarantees. Array of entries with 'constraint', 'target' (numeric value with unit), and 'source' (always human_provided)."
     },
-    "open_questions": {
+    "risks": {
+      "kind": "mandatory",
+      "description": "Identified migration risks, including mandatory entries for each uncovered regression_risk gap from the upstream model. Array of entries with 'risk', 'impact', 'likelihood', 'mitigation', and 'trigger_signal' keys."
+    },
+    "assumptions": {
+      "kind": "mandatory",
+      "description": "Assumptions inherited from or implied by the upstream evolution model that are not verified facts. Array of strings."
+    },
+    "handoff_contract": {
+      "kind": "mandatory",
+      "description": "Binding decisions the tech stack agent can treat as fixed. Array of strings covering execution strategy, shim approach, deployment pattern, rollback triggers, and gate conditions."
+    },
+    "open_decisions": {
       "kind": "optional",
-      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+      "description": "Unresolved decisions from the session. Array of entries with 'decision' and 'blocked_by' keys."
     }
   }
 }

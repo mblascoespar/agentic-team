@@ -1,36 +1,69 @@
 {
+  "decision_object_shape": {
+    "recommendation": "string — chosen option",
+    "rationale": "string — specific upstream model signal that drove this recommendation",
+    "confidence": "high | medium | low",
+    "reversibility": "high | medium | low",
+    "alternatives_considered": ["string"],
+    "tradeoff": "string — what is gained / what is sacrificed",
+    "trigger_conditions": ["string — what future change would invalidate this recommendation"]
+  },
   "fields": {
+    "service_topology": {
+      "kind": "mandatory",
+      "description": "Service decomposition decision: modular monolith vs services vs hybrid. Single decision object."
+    },
     "layering_strategy": {
       "kind": "mandatory",
-      "description": "Internal layering pattern per bounded context (hexagonal/clean/layered), CQRS decisions, and derivation rationale"
+      "description": "Layering pattern per bounded context (hexagonal/clean/layered) and CQRS decision per context. Array of decision objects, one per context, each with a 'context' identifier key."
     },
-    "aggregate_consistency": {
+    "consistency_model": {
       "kind": "mandatory",
-      "description": "Consistency model per aggregate: within-aggregate (always strong) and cross-aggregate events with targets"
-    },
-    "integration_patterns": {
-      "kind": "mandatory",
-      "description": "Cross-context integration decisions: relationship type, sync/async, API surface, ACL, consistency guarantee"
+      "description": "Consistency model per aggregate: within_aggregate (always strong) and cross_aggregate_events extracted from the domain model. Array, one entry per aggregate, each with an 'aggregate' identifier key."
     },
     "storage": {
       "kind": "mandatory",
-      "description": "Storage type per aggregate (relational/document/event-store/in-memory) with transaction boundary and rationale"
+      "description": "Storage type per aggregate (relational/document/event-store). Array of decision objects, one per aggregate, each with an 'aggregate' identifier key."
+    },
+    "cross_context_query": {
+      "kind": "mandatory",
+      "description": "Strategy for consumers that need data spanning multiple bounded contexts: API composition vs dedicated cross-context read model. Single decision object. If no cross-context reads exist in the domain model, set recommendation to 'not_applicable' with rationale."
+    },
+    "contract_versioning": {
+      "kind": "mandatory",
+      "description": "How context boundaries handle breaking changes to public interfaces (REST APIs and integration events): tolerant reader, consumer-driven contracts, or strict versioning. Single decision object."
+    },
+    "integration_patterns": {
+      "kind": "mandatory",
+      "description": "Cross-context integration decisions per context map boundary: sync/async, ACL required, messaging style. Array of decision objects, one per boundary, each with a 'boundary' identifier key."
     },
     "cross_cutting": {
       "kind": "mandatory",
-      "description": "Auth, error propagation, and observability decisions applied globally"
+      "description": "Auth layer placement, error propagation rules per layer boundary, and observability approach. Single decision object."
     },
     "testing_strategy": {
       "kind": "mandatory",
-      "description": "Testing approach per architectural layer with what to test and what not to test"
+      "description": "Testing approach per architectural layer derived from confirmed layering pattern. Array of entries with 'layer', 'what_to_test', and 'what_not_to_test' keys."
     },
     "nfrs": {
       "kind": "mandatory",
-      "description": "Non-functional requirements with measurable constraints, scope, and source"
+      "description": "Non-functional requirements. Array of entries with 'constraint', 'target' (numeric value with unit), and 'source' (always human_provided)."
     },
-    "open_questions": {
+    "risks": {
+      "kind": "mandatory",
+      "description": "Identified architectural risks. Array of entries with 'risk', 'impact', 'likelihood', 'mitigation', and 'trigger_signal' keys."
+    },
+    "assumptions": {
+      "kind": "mandatory",
+      "description": "Assumptions inherited from or implied by the upstream model that are not verified facts. Array of strings."
+    },
+    "handoff_contract": {
+      "kind": "mandatory",
+      "description": "Binding decisions the tech stack agent can treat as fixed. Array of strings covering topology, patterns, storage types, and integration styles."
+    },
+    "open_decisions": {
       "kind": "optional",
-      "description": "Unresolved architectural ambiguities blocking the tech stack stage"
+      "description": "Unresolved decisions from the session. Array of entries with 'decision' and 'blocked_by' keys."
     }
   }
 }

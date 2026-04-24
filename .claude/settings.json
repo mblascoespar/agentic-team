@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__agentic-team__read_artifact",
+      "mcp__agentic-team__get_available_artifacts",
+      "mcp__agentic-team__get_work_context"
+    ]
+  }
+}

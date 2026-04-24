@@ -322,19 +322,24 @@ _STAGE_CONFIG = {
 
 ---
 
-### Step 15 — Architecture Agent Refactor (Full) `TODO`
+### Step 15 — Architecture Agent Refactor (Full) `DONE`
 
 **Milestone:** Architecture Agent applies the correct derivation rules for the problem type. Design artifact body is archetype-specific. Agent reads archetype from the upstream artifact returned by `get_work_context` — no PRD read needed.
 
 **Why here:** Depends on Steps 12 (get_work_context), 13 (generic write_artifact), 10 (per-archetype body schemas exist).
 
+**Approach taken:** Split monolithic `architecture-agent.md` into per-archetype specialists rather than a single branching file. Shared behavior extracted to `architecture-shared.md`.
+
 #### Tasks
-- [ ] `.claude/commands/architecture-agent.md`:
-  - Change `write_design` → `write_artifact(stage: "design")`, `approve_design` → `approve_artifact`
-  - Add `get_work_context`, apply two-path entry point; archetype read from `get_work_context` upstream content
-  - Branch derivation rules by archetype — one section per archetype; DDD rules apply only to `domain_system`
-  - Add derivation rules for: `data_pipeline`, `system_integration`, `process_system`, `system_evolution`
-  - Remove hardcoded DDD-only challenge criteria; replace with archetype-conditional challenges
+- [x] `.claude/commands/architecture-agent.md` — retired; replaced with routing stub directing users to archetype-specific agents
+- [x] `.claude/commands/architecture-shared.md` — shared operating mode, reasoning engine, principles, decision framework
+- [x] `.claude/commands/architecture-domain-system.md` — full implementation: 9 Tier 2 decisions (Bounded Context Canvas dimensions), derivation rules, regret minimization, classification-first flow
+- [x] `.claude/commands/architecture-system-evolution.md` — full implementation: migration classification taxonomy, decision library (not a sequence), classification-first creation flow
+- [x] `.claude/commands/architecture-data-pipeline.md` — stub (not yet implemented)
+- [x] `.claude/commands/architecture-system-integration.md` — stub (not yet implemented)
+- [x] `.claude/commands/architecture-process-system.md` — stub (not yet implemented)
+- [x] `engine/schemas/design-domain_system.json` — updated with `cross_context_query` and `contract_versioning` fields
+- [x] `engine/schemas/design-system_evolution.json` — rewritten: `decision_object_shape`, migration-specific fields, `open_decisions`
 
 ---
 
