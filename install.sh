@@ -35,15 +35,14 @@ fi
 # Register MCP server (idempotent)
 # ---------------------------------------------------------------------------
 
-if claude mcp list --scope user 2>/dev/null | grep -q "^$MCP_NAME"; then
-    echo "  MCP server '$MCP_NAME' already registered — skipping."
+if command -v uv &>/dev/null; then
+    MCP_CMD_OUTPUT=$(claude mcp add --scope user "$MCP_NAME" -- uv run python "$MCP_SERVER" 2>&1) && \
+        echo "  MCP server '$MCP_NAME' registered." || \
+        { echo "$MCP_CMD_OUTPUT" | grep -q "already exists" && echo "  MCP server '$MCP_NAME' already registered — skipping." || { echo "$MCP_CMD_OUTPUT" >&2; exit 1; }; }
 else
-    if command -v uv &>/dev/null; then
-        claude mcp add --scope user "$MCP_NAME" -- uv run python "$MCP_SERVER"
-    else
-        claude mcp add --scope user "$MCP_NAME" -- python3 "$MCP_SERVER"
-    fi
-    echo "  MCP server '$MCP_NAME' registered."
+    MCP_CMD_OUTPUT=$(claude mcp add --scope user "$MCP_NAME" -- python3 "$MCP_SERVER" 2>&1) && \
+        echo "  MCP server '$MCP_NAME' registered." || \
+        { echo "$MCP_CMD_OUTPUT" | grep -q "already exists" && echo "  MCP server '$MCP_NAME' already registered — skipping." || { echo "$MCP_CMD_OUTPUT" >&2; exit 1; }; }
 fi
 
 # ---------------------------------------------------------------------------
@@ -68,4 +67,4 @@ echo ""
 echo "To use in a project:"
 echo "  1. Copy templates/CLAUDE.md to your project root"
 echo "  2. Open Claude Code in your project"
-echo "  3. Run /brainstorm to start"
+echo "  3. Run /agentic-team:brainstorm to start"

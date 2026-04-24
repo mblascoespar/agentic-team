@@ -12,63 +12,39 @@ A production-grade multi-agent system where workflows are modeled as DAGs, each 
 
 ```bash
 uv sync
+bash install.sh
 ```
+
+`install.sh` registers the MCP server globally (user scope) and symlinks the agent commands into `~/.claude/commands/agentic-team/`. Run once after cloning. Re-running is safe — it is idempotent. After this, every Claude Code session on your machine has access to the agents and tools, regardless of which project directory you open.
 
 ## Running with Claude Code
 
 The system runs entirely through Claude Code. No separate server startup needed.
 
-### 1. Start Claude Code in this directory
+### 1. Open Claude Code in your project directory
 
 ```bash
+cd /your/project
 claude
 ```
 
-On startup, Claude Code automatically discovers and connects to the MCP server defined in `.mcp.json`. You should see `product-agent` listed in the available tools.
+The MCP server connects automatically. Agent commands are available as `/agentic-team:<command>`.
 
 ### 2. Explore the idea (Brainstormer)
 
 ```
-/brainstorm I want to build a deploy rollback tool for backend engineers
+/agentic-team:brainstorm I want to build a deploy rollback tool for backend engineers
 ```
 
-Claude runs a competitive scan, challenges the idea one question at a time, presents ≥2 directions with tradeoffs, and waits for you to confirm a direction before drafting. When ready:
+Claude runs a competitive scan, challenges the idea one question at a time, presents ≥2 directions with tradeoffs, and waits for you to confirm a direction before drafting. Approve when satisfied — DAG advances to Product Owner.
+
+### 3. Create a PRD (Product Owner)
 
 ```
-draft it
+/agentic-team:product-owner <slug>
 ```
 
-Claude calls `write_brief` → artifact written to `artifacts/<slug>/brief/v1.json` → rendered Brief shown.
-
-Refine by answering open questions, then approve:
-
-```
-approve
-```
-
-Claude calls `approve_brief` → `status: "approved"` set. DAG advances to Product Agent.
-
-### 3. Create a PRD (Product Agent)
-
-```
-/product-owner <slug>
-```
-
-Claude reads the approved Brief and runs its own challenge loop — one question at a time — before drafting. The Brief informs but does not replace the PO's challenge. When ready:
-
-```
-draft it
-```
-
-Claude calls `write_prd` → artifact written to `artifacts/<slug>/prd/v1.json` → rendered PRD shown.
-
-Refine by answering open questions, then approve:
-
-```
-approve
-```
-
-Claude calls `approve_prd` → `status: "approved"` set. The PRD declares the problem archetype (`domain_system`, `data_pipeline`, `system_integration`, or `process_system`). The engine routes the slug to the correct model stage.
+Claude reads the approved Brief and runs its own challenge loop — one question at a time — before drafting. The PRD declares the problem archetype (`domain_system`, `data_pipeline`, `system_integration`, `process_system`, or `system_evolution`). The engine routes the slug to the correct model stage. Approve when satisfied.
 
 ### 4. Model the problem (Model Agent)
 
@@ -85,39 +61,25 @@ Each agent is a specialist for its problem type. It challenges in plain business
 
 ### 5. Design the architecture (Architecture Agent)
 
-```
-/architecture-agent <slug>
-```
+The command depends on the archetype:
 
-Claude reads the approved domain model, derives architectural decisions, and challenges you only on inputs it cannot derive (NFRs, compliance, deployment constraints). Approve when satisfied — DAG advances to Tech Stack Agent.
+| Archetype | Command |
+|---|---|
+| `domain_system` | `/agentic-team:architecture-domain-system <slug>` |
+| `system_evolution` | `/agentic-team:architecture-system-evolution <slug>` |
+| `data_pipeline` | `/agentic-team:architecture-data-pipeline <slug>` _(stub)_ |
+| `system_integration` | `/agentic-team:architecture-system-integration <slug>` _(stub)_ |
+| `process_system` | `/agentic-team:architecture-process-system <slug>` _(stub)_ |
+
+Claude reads the approved model, derives architectural decisions, and challenges you only on inputs it cannot derive (NFRs, compliance, deployment constraints). Approve when satisfied — DAG advances to Tech Stack Agent.
 
 ### 6. Choose the tech stack (Tech Stack Agent)
 
 ```
-/tech-stack-agent <slug>
+/agentic-team:tech-stack-agent <slug>
 ```
 
-Claude reads the approved design artifact, identifies which technology decision dimensions apply (API framework, database + ORM, auth, observability, test framework, and optionally message broker), and presents a numbered agenda for confirmation. It then runs **sequential per-decision deliberation** — 2–3 candidates with honest tradeoffs, constraint capture, confirmed choice — one decision at a time. When all decisions are resolved:
-
-```
-draft it
-```
-
-Claude calls `write_tech_stack` → artifact written to `artifacts/<slug>/tech_stack/v1.json` → rendered Tech Stack shown.
-
-After drafting, any closed decision can be re-opened by name:
-
-```
-let's re-open the API framework decision
-```
-
-Claude re-enters deliberation for that decision using prior constraints as context. Approve when the full tech stack is correct:
-
-```
-approve
-```
-
-Claude calls `approve_tech_stack` → `status: "approved"` set. DAG advances to Execution Agent.
+Claude reads the approved design artifact, identifies which technology decision dimensions apply, and runs sequential per-decision deliberation — 2–3 candidates with honest tradeoffs, constraint capture, confirmed choice — one decision at a time. Approve when the full tech stack is correct.
 
 ### 7. Design a new capability
 
@@ -164,12 +126,19 @@ Tests are organized by **what they protect**, not by the file they test. The fou
 │
 ├── .claude/
 │   └── commands/
-│       ├── brainstorm.md          # /brainstorm slash command
-│       ├── product-owner.md       # /product-owner slash command
-│       ├── model-domain.md        # /model-domain slash command (domain_system archetype)
-│       ├── architecture-agent.md  # /architecture-agent slash command
-│       ├── tech-stack-agent.md    # /tech-stack-agent slash command
-│       └── design.md              # /design slash command (Systems Architect)
+│       ├── brainstorm.md                    # /agentic-team:brainstorm
+│       ├── product-owner.md                 # /agentic-team:product-owner
+│       ├── model-domain.md                  # /agentic-team:model-domain (domain_system)
+│       ├── model-data-flow.md               # /agentic-team:model-data-flow (data_pipeline)
+│       ├── model-system.md                  # /agentic-team:model-system (system_integration)
+│       ├── model-workflow.md                # /agentic-team:model-workflow (process_system)
+│       ├── model-evolution.md               # /agentic-team:model-evolution (system_evolution)
+│       ├── architecture-domain-system.md    # /agentic-team:architecture-domain-system
+│       ├── architecture-system-evolution.md # /agentic-team:architecture-system-evolution
+│       ├── architecture-data-pipeline.md    # stub
+│       ├── architecture-system-integration.md # stub
+│       ├── architecture-process-system.md   # stub
+│       └── tech-stack-agent.md              # /agentic-team:tech-stack-agent
 │
 ├── design/                        # Capability design documents
 │   ├── brainstorm-agent.md        # Brainstormer: tool schema, artifact schema, session model
