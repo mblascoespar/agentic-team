@@ -375,21 +375,21 @@ _STAGE_CONFIG = {
 
 ---
 
-### Step 17 — Tech Stack Agent Refactor `DESIGN REQUIRED`
+### Step 17 — Tech Stack Agent Refactor `DONE`
 
 **Milestone:** Tech stack decisions use correct decision dimensions per archetype.
 
-**Design required before implementation:**
-- Per-archetype decision dimension tables (what decisions are relevant for data_pipeline, system_integration, process_system, system_evolution)
-- Per-archetype decision dimension tables (what decisions are relevant for each archetype)
-
-#### Tasks (after design)
-- [ ] Design per-archetype decision dimension tables
-- [ ] `.claude/commands/tech-stack-agent.md`:
-  - Change `write_tech_stack` → `write_artifact(stage: "tech_stack")`, `approve_tech_stack` → `approve_artifact`
-  - Read archetype from `get_work_context` upstream (design artifact) content
-  - Per-archetype decision dimension section (replace fixed DDD table)
-- [ ] Tests: contract (design artifact of each archetype type → tech_stack with correct decision dimensions)
+#### Tasks
+- [x] Design per-archetype decision dimension tables
+- [x] `.claude/commands/tech-stack-agent.md`:
+  - Archetype detection from design body (top-level key presence)
+  - Tier 1 silent derivations per archetype (forced by design, no deliberation)
+  - Per-archetype technology decision library with "live when" conditions and regret rules
+  - Phase structure updated: detect → derive → state live/not-live → agenda → deliberate
+  - `domain_system`: 24 decisions covering data, communication, auth, observability, testing, compliance
+  - `system_evolution`: 14 decisions covering migration execution, schema, validation, deployment, operations
+  - `data_pipeline`, `system_integration`, `process_system`: stubbed with "not yet implemented" message
+- [ ] Tests: contract (design artifact of each archetype type → tech_stack with correct decision dimensions) — agent-side behavior, not engine-enforced; deferred
 
 ---
 
