@@ -4,6 +4,8 @@ Run via: python engine/mcp_server.py
 Registered in .mcp.json at project root.
 """
 import json
+import os
+import re
 from pathlib import Path
 
 from mcp.server import Server
@@ -16,8 +18,11 @@ from tool_handler import (
     get_available_artifacts, read_artifact, handle_get_work_context,
 )
 from renderer import render_artifact
+import logger
 
 app = Server("agentic-team")
+
+_EXCLUDED_FROM_INSTRUMENTATION = {"get_journey", "get_session"}
 
 
 @app.list_tools()
@@ -182,15 +187,108 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="get_journey",
+            description="Return all events for a slug, ordered by timestamp ascending.",
+            inputSchema={
+                "type": "object",
+                "required": ["slug"],
+                "properties": {
+                    "slug": {"type": "string", "description": "Project slug to query."},
+                },
+            },
+        ),
+        Tool(
+            name="get_session",
+            description="Return all events for a session_id, ordered by timestamp ascending.",
+            inputSchema={
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {
+                    "session_id": {"type": "string", "description": "UUID4 session identifier."},
+                },
+            },
+        ),
     ]
 
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    try:
+    if name in _EXCLUDED_FROM_INSTRUMENTATION:
         return await _dispatch(name, arguments)
-    except ValueError as e:
-        return [TextContent(type="text", text=str(e))]
+
+    slug = _extract_slug(name, arguments)
+    stage = _extract_stage(name, arguments)
+
+    logger.bind_tool_context(name, slug, stage)
+    start_time = logger.emit_entry()
+    try:
+        result = await _dispatch(name, arguments)
+        version_info = _extract_version_info(name, result)
+        logger.emit_exit(start_time, "ok", **version_info)
+        return result
+    except Exception as e:
+        logger.emit_exit(
+            start_time, "error",
+            error_class=f"{type(e).__name__}: {str(e)[:120]}",
+        )
+        raise
+    finally:
+        logger.clear_tool_context()
+
+
+def _extract_slug(name: str, arguments: dict) -> str | None:
+    if name == "approve_artifact":
+        parts = arguments.get("artifact_path", "").split("/")
+        return parts[1] if len(parts) > 2 else None
+    return arguments.get("slug")
+
+
+def _extract_stage(name: str, arguments: dict) -> str | None:
+    if name == "approve_artifact":
+        parts = arguments.get("artifact_path", "").split("/")
+        return parts[2] if len(parts) > 3 else None
+    return arguments.get("stage")
+
+
+def _extract_version_info(name: str, result: list) -> dict:
+    if not result:
+        return {}
+    text = result[0].text
+    if name == "write_artifact":
+        m = re.search(r"/v(\d+)\.json", text)
+        if m:
+            return {"result_version": int(m.group(1))}
+    elif name == "read_artifact":
+        try:
+            data = json.loads(text)
+            return {"read_version": data["artifact"]["version"]}
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return {}
+
+
+def _query_events(slug: str | None = None, session_id: str | None = None) -> list:
+    log_path = logger.get_log_path()
+    if log_path is None or not log_path.exists():
+        return []
+    events = []
+    with log_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if slug is not None and event.get("slug") != slug:
+                continue
+            if session_id is not None and event.get("session_id") != session_id:
+                continue
+            events.append(event)
+    events.sort(key=lambda e: e.get("timestamp", ""))
+    return events
 
 
 async def _dispatch(name: str, arguments: dict) -> list[TextContent]:
@@ -243,12 +341,22 @@ async def _dispatch(name: str, arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=json.dumps(schema, indent=2))]
 
+    if name == "get_journey":
+        events = _query_events(slug=arguments["slug"])
+        return [TextContent(type="text", text=json.dumps(events, indent=2))]
+
+    if name == "get_session":
+        events = _query_events(session_id=arguments["session_id"])
+        return [TextContent(type="text", text=json.dumps(events, indent=2))]
+
     return [TextContent(type="text", text=f"ERROR: unknown tool '{name}'")]
 
 
 async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+    log_path = Path(os.getenv("LOG_PATH", "engine/logs/events.jsonl"))
+    logger.configure(log_path)
+    async with stdio_server() as (read_stream, write_write):
+        await app.run(read_stream, write_write, app.create_initialization_options())
 
 
 if __name__ == "__main__":
