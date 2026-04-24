@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.26.0",
     "jsonschema>=4.0",
+    "structlog>=24.0",
 ]
 
 [dependency-groups]
@@ -20,4 +21,5 @@ markers = [
     "lifecycle: correct versioning behavior through v1/v2/approve chain",
     "contract: DAG node boundary handoffs between agents",
     "renderer: artifact-to-text rendering output",
+    "observability: structured event logging for agent misbehavior detection",
 ]
