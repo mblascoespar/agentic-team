@@ -104,31 +104,28 @@ This breaks for data pipelines, integrations, migrations, and process workflows 
 
 ---
 
-### Step 6 — Architecture Agent Refactor `PARTIAL`
+### Step 6 — Architecture Agent Refactor `DONE`
 
 **Milestone (engine):** `handle_write_design` resolves upstream model stage from topology. Design artifacts chain correctly for every archetype.
 
-**Milestone (agent, pending):** Archetype-aware derivation rules. Per-archetype body structure.
+**Milestone (agent):** Archetype-aware derivation rules. Per-archetype body structure.
 
 #### Tasks
 - [x] `handle_write_design` resolves upstream model stage from topology
 - [x] Tests: stale `domain/v1.json` references updated
-- [ ] Per-archetype Design artifact body schemas — design complete (this session), implementation in Phase 2
-- [ ] Update `handle_write_design` for archetype-specific body — blocked on Phase 2 generic handler
-- [ ] Rewrite Architecture Agent system prompt — blocked on Phase 2
+- [x] Per-archetype Design artifact body schemas — absorbed into Step 10 (all 5 design schemas exist)
+- [x] Update `handle_write_design` for archetype-specific body — absorbed into Step 13 (generic `write_artifact`)
+- [x] Rewrite Architecture Agent system prompt — absorbed into Step 15 (per-archetype agents)
 
 ---
 
-### Step 7 — Tech Stack Agent Refactor `TODO`
+### Step 7 — Tech Stack Agent Refactor `DONE`
 
 **Milestone:** Tech stack decisions use correct decision dimensions per archetype.
 
-**Design required:** per-archetype decision dimension tables (not yet designed).
-
 #### Tasks
-- [ ] Design per-archetype decision dimensions (DESIGN REQUIRED — gap #5)
-- [ ] Update Tech Stack Agent system prompt
-- [ ] Tests: contract (design artifact of each type → tech stack with correct dimensions)
+- [x] Tool name updates (`write_tech_stack` → `write_artifact`, etc.) — absorbed into Step 14
+- [x] Per-archetype decision dimensions + agent rewrite — absorbed into Step 17 (DESIGN REQUIRED, tracked there)
 
 ---
 
