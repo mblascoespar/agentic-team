@@ -496,20 +496,23 @@ def handle_get_work_context(slug: str, stage: str) -> dict:
             "Use get_available_artifacts instead."
         )
 
-    topology = _resolve_topology(slug)
-    if topology is None:
-        raise ValueError(
-            f"ERROR [get_work_context]: cannot determine topology for '{slug}'. "
-            "Approve the PRD first."
-        )
+    if stage == "prd":
+        upstream_stage = "brief"
+    else:
+        topology = _resolve_topology(slug)
+        if topology is None:
+            raise ValueError(
+                f"ERROR [get_work_context]: cannot determine topology for '{slug}'. "
+                "Approve the PRD first."
+            )
 
-    if stage not in topology:
-        raise ValueError(
-            f"ERROR [get_work_context]: stage '{stage}' is not in the topology for '{slug}'."
-        )
+        if stage not in topology:
+            raise ValueError(
+                f"ERROR [get_work_context]: stage '{stage}' is not in the topology for '{slug}'."
+            )
 
-    idx = topology.index(stage)
-    upstream_stage = topology[idx - 1]
+        idx = topology.index(stage)
+        upstream_stage = topology[idx - 1]
 
     upstream_path = find_latest(slug, upstream_stage, status="approved")
     if upstream_path is None:
