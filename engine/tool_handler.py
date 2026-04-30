@@ -755,4 +755,5 @@ def handle_approve_artifact(artifact_path: str) -> dict:
         "changed_fields": ["status"],
     })
     path.write_text(json.dumps(artifact, indent=2))
-    return artifact
+    slug = path.parts[path.parts.index("artifacts") + 1]
+    return {**artifact, "next_stage": _next_stage(slug)}

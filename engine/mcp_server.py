@@ -113,7 +113,9 @@ async def list_tools() -> list[Tool]:
             name="approve_artifact",
             description=(
                 "Approve any artifact after validating all mandatory schema fields are present. "
-                "Advances the DAG to the next stage."
+                "Advances the DAG to the next stage. "
+                "Response includes 'next_stage': the next pipeline stage to run, or null if the pipeline is complete. "
+                "Always report next_stage to the user after approval — never infer or guess the next step independently."
             ),
             inputSchema={
                 "type": "object",
