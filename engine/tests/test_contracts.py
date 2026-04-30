@@ -202,7 +202,7 @@ class TestTopologyResolution:
         topology = _resolve_topology(SLUG)
         assert "model_system" in topology
         assert "model_workflow" in topology
-        assert topology.index("model_system") < topology.index("model_workflow")
+        assert topology.index("model_workflow") < topology.index("model_system")
 
 
 # ===========================================================================

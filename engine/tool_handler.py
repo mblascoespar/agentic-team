@@ -30,7 +30,7 @@ _DAG_TOPOLOGIES: dict[tuple, list[str]] = {
     ("system_integration",):                  ["brief", "prd", "model_system",     "design", "tech_stack"],
     ("process_system",):                      ["brief", "prd", "model_workflow",   "design", "tech_stack"],
     ("system_evolution",):                    ["brief", "prd", "model_evolution",  "design", "tech_stack"],
-    ("system_integration", "process_system"): ["brief", "prd", "model_system", "model_workflow", "design", "tech_stack"],
+    ("system_integration", "process_system"): ["brief", "prd", "model_workflow", "model_system", "design", "tech_stack"],
 }
 
 _BASE_SCHEMAS_BY_STAGE: dict[str, str] = {
